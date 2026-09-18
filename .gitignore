@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+
+# Test / lint caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Local runtime state (never inside the Vault)
+.ductor/
+*.db
+*.db-wal
+*.db-shm
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
