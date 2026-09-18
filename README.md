@@ -132,6 +132,7 @@ knowledge-router/
 ├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
 ├── pyproject.toml           # pytest + ruff configuration
 ├── scripts/                 # 28 stdlib-only modules
+├── examples/contexts.json   # Context definition template
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
