@@ -37,7 +37,7 @@ from host-specific activation gates.
 - [x] Cross-Vault identity safety: same-named Contexts stay partitioned by stable Vault id.
 - [x] Unified `status --json` combining attachment/index facts, coverage, receipts, baseline,
       failed runs and the delivery boundary.
-- [x] `tests/` suite: **151 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **153 tests**, ruff- and bytecode-clean.
 
 ## Open
 

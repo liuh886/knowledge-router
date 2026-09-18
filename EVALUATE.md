@@ -36,7 +36,7 @@ python -m ruff check scripts tests integrations
 
 ## 4. Recorded results
 
-- **Full local suite: 151 tests passed**, ruff and bytecode compilation clean. The single warning is
+- **Full local suite: 153 tests passed**, ruff and bytecode compilation clean. The single warning is
   an intentional duplicate ZIP entry used by the backup tamper-refusal fixture.
 - **Real-Vault benchmark** (local, historical): 22 retrieval cases over a 1,500+ note Vault,
   1,012 latency samples, Recall@5 = MRR = abstention precision = citation coverage = 1.0,
@@ -53,6 +53,9 @@ python -m ruff check scripts tests integrations
   Daily, Contact/entity, Project and old-state archive sources; asserts all four quality metrics at
   1.0 across three warm repetitions and measures process-inclusive `search`/`contexts brief` timings
   without asserting a machine-specific SLA.
+- **Packaged-copy verification**: the suite passes independently in its own directory (153 tests),
+  and a standalone CLI `attach` + `search` smoke test in an isolated temp state root returns a
+  cited source with `path`, lines, `source_sha256`, `index_generation` and `stale=false`.
 - **Cross-process write safety**: Windows append obtains an OS handle denying competing writers and
   pins parent directories against replacement; non-Windows append fails closed.
 - **Recovery**: allowlisted checkpoints/backups with per-entry SHA-256 manifests and sidecars;
