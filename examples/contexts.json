@@ -1,0 +1,32 @@
+{
+  "schema_version": 1,
+  "contexts": [
+    {
+      "id": "daily:main",
+      "type": "daily",
+      "kind": "collection",
+      "name": "Daily",
+      "purpose": "Chronological events, progress and reviews",
+      "scopes": ["Daily"],
+      "aliases": ["Journal"]
+    },
+    {
+      "id": "project:main",
+      "type": "project",
+      "kind": "collection",
+      "name": "Project",
+      "purpose": "Project goals, progress, decisions and next steps",
+      "scopes": ["Projects"],
+      "aliases": ["Projects"]
+    },
+    {
+      "id": "contact:main",
+      "type": "contact",
+      "kind": "collection",
+      "name": "Contact",
+      "purpose": "People, conversations, commitments and follow-ups",
+      "scopes": ["Contacts"],
+      "aliases": ["People"]
+    }
+  ]
+}

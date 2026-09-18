@@ -77,6 +77,10 @@ python scripts/knowledge_router.py capture --vault personal --commit --plan-id <
 Capture requires an explicit write policy (`--write-policy append-create`) and either an explicit
 user instruction or a saved `capture_mode=auto`. `write_policy=off` is the default.
 
+`examples/contexts.json` is a starting template: edit its `scopes` to match directories that
+actually contain Markdown in your Vault. Registration fails closed if a scope has no readable
+evidence, so the template never silently creates folders.
+
 ---
 
 ## Architecture
