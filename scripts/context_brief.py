@@ -7,10 +7,11 @@ import re
 from typing import Any
 
 from context_events import context_history
-from context_manager import _under, discover_contexts
+from context_manager import discover_contexts, extract_tags, note_in_context
 from context_state import project_state
 from context_store import load_context_version
 from fts_indexer import extract_query_terms, scan_notes
+from link_graph import anchor_linked_paths, load_link_graph
 from project_adapter import list_projects, search_projects
 from registry import VaultConfig, VaultRegistry
 from secure_io import secure_read_bytes
@@ -51,11 +52,14 @@ def brief_context(
     context = matches[0]
     history = context_history(registry, config, context["id"], limit=100)
     linked_paths = {event["path"] for event in history["events"]}
+    tags_by_path = {n.path: extract_tags(n.content) for n in scan.records}
     notes = [
         n
         for n in scan.records
-        if n.path in linked_paths or any(_under(n.path, s) for s in context["scopes"])
+        if n.path in linked_paths
+        or note_in_context(n.path, tags_by_path[n.path], context)
     ]
+    affinity = anchor_linked_paths(load_link_graph(registry, config), context["scopes"])
     terms = extract_query_terms(query) if query.strip() else []
     candidates = []
     for note in notes:
@@ -82,8 +86,9 @@ def brief_context(
             candidates.append(
                 (
                     score,
+                    int(note.path in affinity),
                     category != "reference",
-                    note.modified_at,
+                    note.mtime_ns,
                     note.path,
                     start,
                     excerpt,
@@ -92,12 +97,12 @@ def brief_context(
                 )
             )
     candidates.sort(
-        key=lambda item: (-item[0], -int(item[1]), -item[7].mtime_ns, item[3], item[4])
+        key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4], item[5])
     )
     evidence = []
     unavailable = set()
     verified: dict[str, bool] = {}
-    for _, _, _, _, start, excerpt, category, note in candidates:
+    for _, _, _, _, _, start, excerpt, category, note in candidates:
         if note.path not in verified:
             try:
                 raw = secure_read_bytes(config.root_path, note.path)
@@ -131,6 +136,8 @@ def brief_context(
         "definition_revision": version["revision"] if version else None,
         "query": query,
         "source_count": len(notes),
+        "graph_affinity_used": bool(affinity),
+        "graph_affinity_source_count": sum(1 for n in notes if n.path in affinity),
         "evidence": evidence,
         "linked_event_count": history["event_count"],
         "linked_events_truncated": history["truncated"],

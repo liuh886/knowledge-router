@@ -86,6 +86,15 @@ alias; attachment references become `asset_links` and never become note edges. O
 projection is written; the Vault is not modified, and no relationship is inferred from
 co-occurrence. `definitions_stale` is reported when the registered definition baseline predates
 the graph's source generation.
+
+A Context definition may narrow membership with optional `include`, `exclude` and `tags`.
+`include`/`exclude` are Vault-relative path prefixes (a note must match an `include` when one
+is present and must not match any `exclude`); `tags` requires the note's frontmatter `tags`/`tag`
+to contain one of the values, with nested tags matching their parent (`Contact/Person` satisfies
+`Contact`). Filter values are validated at registration, applied consistently to discovery,
+briefs, drift bindings and `contexts links`, and never rewrite a note. Briefs also re-rank
+in-scope passages toward notes linked from MOC anchors when a stored `link_graph.json` exists;
+the result reports `graph_affinity_used`, and ranking is unchanged when no graph is stored.
 Follow-up dates are deliberately unresolved in M1 and no reminder is scheduled.
 
 Both commands accept `--definitions PATH` for an explicit JSON declaration:

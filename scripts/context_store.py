@@ -8,7 +8,7 @@ import os
 from datetime import UTC, datetime
 from typing import Any
 
-from context_manager import discover_contexts
+from context_manager import discover_contexts, extract_tags, passes_filters
 from fts_indexer import ScanReport, scan_notes
 from registry import FileLock, VaultConfig, VaultRegistry, atomic_json_write
 
@@ -66,9 +66,12 @@ def _bindings(definitions: dict[str, Any], scan: ScanReport) -> dict[str, Any]:
             scope: {
                 n.path: n.checksum
                 for n in scan.records
-                if scope == "."
-                or n.path == scope
-                or n.path.startswith(scope.rstrip("/") + "/")
+                if (
+                    scope == "."
+                    or n.path == scope
+                    or n.path.startswith(scope.rstrip("/") + "/")
+                )
+                and passes_filters(n.path, extract_tags(n.content), entry)
             }
             for scope in entry["scopes"]
         }
@@ -104,6 +107,9 @@ def register_contexts(
                     "kind",
                     "maintenance",
                     "project_ids",
+                    "include",
+                    "exclude",
+                    "tags",
                 )
             }
             for row in catalog["contexts"]

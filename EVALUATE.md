@@ -36,7 +36,7 @@ python -m ruff check scripts tests integrations
 
 ## 4. Recorded results
 
-- **Full local suite: 161 tests passed**, ruff and bytecode compilation clean. The single warning is
+- **Full local suite: 169 tests passed**, ruff and bytecode compilation clean. The single warning is
   an intentional duplicate ZIP entry used by the backup tamper-refusal fixture.
 - **Read-only relationship graph**: `contexts links` reuses the stored graph in ~0.4 s versus a
   ~10 s cold rebuild on a 2,100+ note Vault. It reports topic anchors, related Contexts (overlap
@@ -44,6 +44,11 @@ python -m ruff check scripts tests integrations
   `asset_links`, never as broken note edges. A live sample Vault showed 2,143 notes / 605 note
   edges / 30 MOCs; ~6,200 wikilinks resolved to nothing, which is a property of that Vault rather
   than a resolver defect.
+- **Context filters + graph affinity**: `include`/`exclude`/`tags` narrow membership identically
+  across discovery, briefs, drift bindings and `contexts links`; a brief re-ranks in-scope
+  passages toward MOC-anchor linked notes when a stored graph exists. Applied to a live Vault,
+  excluding four off-topic notes dropped a broad Context from 338 to 334 sources and removed a
+  same-folder noise passage from the top of the brief, with 57 affinity-linked sources reported.
 - **Real-Vault benchmark** (local, historical): 22 retrieval cases over a 1,500+ note Vault,
   1,012 latency samples, Recall@5 = MRR = abstention precision = citation coverage = 1.0,
   warm p50 ≈ 4.87 ms, p95 ≈ 32.33 ms. Reproduce with your own fixture:

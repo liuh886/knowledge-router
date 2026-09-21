@@ -95,6 +95,15 @@ production state into an arbitrary location or another Vault.
   active definition set but preserve prior versions; use `--expected-revision N` for updates.
   Discovery and planning reuse saved definitions automatically. A per-call `--definitions`
   remains a temporary override and does not change the registered version.
+- Refine a Context's membership with optional `include`, `exclude` and `tags` in its
+  definition. `include`/`exclude` are Vault-relative path prefixes (a note must match an
+  `include` when present and must not match any `exclude`); `tags` requires the note's
+  frontmatter `tags`/`tag` to contain one of the listed values (nested tags match their
+  parent, e.g. `Contact/Person` satisfies `Contact`). Filters apply consistently to
+  discovery, briefs, drift checks and `contexts links`; they never rewrite a note.
+- A Context brief boosts passages that a topic anchor links to (graph affinity) when a
+  stored `link_graph.json` exists. It reports `graph_affinity_used` and
+  `graph_affinity_source_count`; without a stored graph, ranking is unchanged.
 - Use `contexts check --vault <name> --json` to compare current source paths/content against
   the registered baseline. A changed source may be an ordinary edit; it is not automatically
   a quality defect. Checks do not repair notes, guess moved paths or reset the baseline.

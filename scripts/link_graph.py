@@ -15,6 +15,7 @@ from collections import defaultdict
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import ScanReport, scan_notes
 from registry import FileLock, VaultConfig, VaultRegistry, atomic_json_write
@@ -111,6 +112,10 @@ def build_link_graph(
         "asset_links": asset_links,
         "mocs": sorted(path for path in degrees if _is_moc(path)),
         "degrees": degrees,
+        "tags": {
+            record.path: list(extract_tags(record.content))
+            for record in scan.records
+        },
         "edges": sorted(edges),
     }
 
@@ -175,6 +180,23 @@ def _in_scope(path: str, scopes: list[str]) -> bool:
     )
 
 
+def anchor_linked_paths(graph: dict[str, Any] | None, scopes: list[str]) -> set[str]:
+    """Return notes linked from MOC anchors that touch the given scopes.
+
+    An MOC is an anchor for the Context when it sits inside a scope or links to a
+    note inside one. Only links the Vault already states are used; nothing is
+    inferred from co-occurrence.
+    """
+    if not graph:
+        return set()
+    mocs = set(graph.get("mocs", ()))
+    linked: set[str] = set()
+    for source, target in graph.get("edges", ()):
+        if source in mocs and (_in_scope(source, scopes) or _in_scope(target, scopes)):
+            linked.add(target)
+    return linked
+
+
 def _empty_result(config: VaultConfig) -> dict[str, Any]:
     return {
         "schema_version": 1,
@@ -218,8 +240,15 @@ def context_links(
         persist_link_graph(registry, config, graph)
 
     degrees: dict[str, list[int]] = graph["degrees"]
+    tags_by_path = {
+        path: tuple(values) for path, values in graph.get("tags", {}).items()
+    }
     members = {
-        row["id"]: {path for path in degrees if _in_scope(path, row["scopes"])}
+        row["id"]: {
+            path
+            for path in degrees
+            if note_in_context(path, tags_by_path.get(path, ()), row)
+        }
         for row in contexts
     }
     own = members[selected["id"]]

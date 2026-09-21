@@ -41,7 +41,10 @@ from host-specific activation gates.
       durable external projection (`link_graph.json`), resolving Markdown and attachment targets,
       detecting MOC/index anchors, and reporting related Contexts, hub notes and cross-scope
       bridges. No relationship is inferred from co-occurrence; no Vault source is written.
-- [x] `tests/` suite: **161 tests**, ruff- and bytecode-clean.
+- [x] Context `include`/`exclude`/`tags` filters, validated at registration and applied
+      consistently to discovery, briefs, drift checks and `contexts links`, plus graph-affinity
+      brief ranking when a stored `link_graph.json` exists. Filters never rewrite a note.
+- [x] `tests/` suite: **169 tests**, ruff- and bytecode-clean.
 
 ## Open
 
@@ -54,9 +57,9 @@ from host-specific activation gates.
       an adapter-specific gate and is never implied by `contexts tick`.
 - [ ] **Automatic state extraction from legacy prose** with evidence-backed review. Explicit
       declarations are the supported mechanism today.
-- [ ] **Graph-aware retrieval.** Context `include/exclude/tags` filters and ranking that uses
-      link distance / anchors, to improve precision where a folder scope is too broad. The
-      `contexts links` projection is the read-only foundation for this.
+- [ ] **Broader graph-aware ranking.** Context filters and MOC-anchor affinity are in place;
+      ranking that uses general link distance between arbitrary notes (not only anchors)
+      remains open.
 - [ ] **Optional semantic retrieval sidecar** — only if a broader benchmark shows a measured recall
       gap. Current lexical/bigram/alias retrieval meets every acceptance gate.
 

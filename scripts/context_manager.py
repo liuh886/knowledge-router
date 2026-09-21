@@ -77,6 +77,108 @@ def _scope(value: Any) -> str:
     return path.as_posix()
 
 
+def _scope_list(value: Any, field: str) -> tuple[str, ...]:
+    if value in (None, []):
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ValueError(
+            f"Context {field} must be a list of nonempty Vault-relative paths"
+        )
+    try:
+        return tuple(_scope(item) for item in value)
+    except ValueError as exc:
+        raise ValueError(f"Context {field}: {exc}") from None
+
+
+def _tag_list(value: Any) -> tuple[str, ...]:
+    if value in (None, []):
+        return ()
+    if not isinstance(value, list) or not all(
+        isinstance(item, str) and item.strip() for item in value
+    ):
+        raise ValueError("Context tags must be a list of nonempty strings")
+    folded = [item.strip().lstrip("#").casefold() for item in value]
+    if any(not item for item in folded):
+        raise ValueError("Context tags must not be empty after normalization")
+    if len(set(folded)) != len(folded):
+        raise ValueError("Context tags must not contain duplicates")
+    return tuple(sorted(set(folded)))
+
+
+def _clean_tag(item: str) -> str:
+    return item.strip().strip("'\"").removeprefix("-").strip().lstrip("#").casefold()
+
+
+def extract_tags(content: str) -> tuple[str, ...]:
+    """Read frontmatter ``tags``/``tag`` values, preserving nested Obsidian tags.
+
+    Accepts the loose forms Obsidian tolerates: inline lists, comma scalars and
+    block lists, including ``tags: - TagName`` written on the key line.
+    """
+    frontmatter = re.match(r"\A---\s*\r?\n(.*?)\r?\n---", content, re.DOTALL)
+    if not frontmatter:
+        return ()
+    lines = frontmatter.group(1).splitlines()
+    values: list[str] = []
+    for index, line in enumerate(lines):
+        match = re.match(r"(?i)^tags?\s*:\s*(.*?)\s*$", line)
+        if not match:
+            continue
+        inline = match.group(1).strip()
+        if inline.startswith("[") and inline.endswith("]"):
+            values.extend(inline[1:-1].split(","))
+        elif inline:
+            values.extend(inline.split(","))
+        else:
+            for nested in lines[index + 1 :]:
+                if nested and not nested[0].isspace():
+                    break
+                item = nested.strip()
+                if item.startswith("-"):
+                    values.append(item.removeprefix("-").strip())
+        break
+    cleaned = {_clean_tag(item) for item in values}
+    return tuple(sorted(item for item in cleaned if item))
+
+
+def _filters(entry: Any) -> tuple[Any, tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    if isinstance(entry, ContextDefinition):
+        return entry.scopes, entry.include, entry.exclude, entry.tags
+    return (
+        entry["scopes"],
+        tuple(entry.get("include") or ()),
+        tuple(entry.get("exclude") or ()),
+        tuple(entry.get("tags") or ()),
+    )
+
+
+def passes_filters(path: str, tags: tuple[str, ...], entry: Any) -> bool:
+    """Apply include/exclude/tag filters without checking scope membership."""
+    _, include, exclude, required = _filters(entry)
+    if include and not any(_under(path, scope) for scope in include):
+        return False
+    if exclude and any(_under(path, scope) for scope in exclude):
+        return False
+    if not required:
+        return True
+    folded = {tag.casefold() for tag in tags}
+    return any(
+        tag == wanted or tag.startswith(wanted + "/")
+        for wanted in required
+        for tag in folded
+    )
+
+
+def note_in_context(path: str, tags: tuple[str, ...], entry: Any) -> bool:
+    """Return whether a note is a filtered member of the given Context."""
+    scopes, _, _, _ = _filters(entry)
+    return any(_under(path, scope) for scope in scopes) and passes_filters(
+        path, tags, entry
+    )
+
+
 @dataclass(frozen=True)
 class ContextDefinition:
     id: str
@@ -89,6 +191,9 @@ class ContextDefinition:
     kind: str
     maintenance: dict[str, Any] | None = None
     project_ids: tuple[str, ...] = ()
+    include: tuple[str, ...] = ()
+    exclude: tuple[str, ...] = ()
+    tags: tuple[str, ...] = ()
 
 
 def maintenance_policy(value: Any) -> dict[str, Any] | None:
@@ -224,6 +329,9 @@ def discover_contexts(
                 kind,
                 maintenance_policy(entry.get("maintenance")),
                 tuple(project_ids),
+                _scope_list(entry.get("include"), "include"),
+                _scope_list(entry.get("exclude"), "exclude"),
+                _tag_list(entry.get("tags")),
             )
             # Declared bindings supersede an inferred binding for the same type/scope.
             contexts = {
@@ -240,7 +348,9 @@ def discover_contexts(
     rows = []
     for item in sorted(contexts.values(), key=lambda c: (c.type, c.id)):
         sources = [
-            note for note in records if any(_under(note.path, s) for s in item.scopes)
+            note
+            for note in records
+            if note_in_context(note.path, extract_tags(note.content), item)
         ]
         for scope in item.scopes:
             if not any(_under(note.path, scope) for note in records):
@@ -257,7 +367,7 @@ def discover_contexts(
     covered = {
         n.path
         for n in records
-        if any(_under(n.path, s) for c in contexts.values() for s in c.scopes)
+        if any(note_in_context(n.path, extract_tags(n.content), c) for c in contexts.values())
     }
     return {
         "schema_version": 1,
@@ -312,7 +422,7 @@ def plan_contexts(
         sources = [
             note
             for note in scan.records
-            if any(_under(note.path, scope) for scope in context["scopes"])
+            if note_in_context(note.path, extract_tags(note.content), context)
         ]
         for note in sorted(sources, key=lambda n: n.path)[:3]:
             lines = note.content.splitlines()
