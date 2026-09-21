@@ -91,3 +91,53 @@ python -m ruff check scripts tests integrations
 
 These are local measured results, not a promise about other machines. Re-run the suite on your own
 hardware before relying on a latency number.
+
+## Link resolution and review-ledger integrity
+
+Two defect classes were reproduced and fixed, and one structural duplication was removed.
+
+**Display truncation leaked into the review ledger.** `_quality_items` sliced its candidate list to
+the display limit before the ledger ids, the fingerprint and the deltas were computed. With the
+notes completely unchanged, lowering `--limit` from 20 to 1 therefore reported every omitted item as
+`resolved_item_ids`. The helper now returns the full list; truncation applies to the returned
+`items` page only and is disclosed as `items_truncated`.
+
+**An empty agenda could be reported as `clear` over an incomplete basis.** The status was
+`attention if items else clear`. It is now `attention` when items exist, `clear` only when the basis
+is complete, and `incomplete` otherwise, naming `no_registered_contexts`, `scan_skipped_sources`,
+`poll_incomplete` or `poll_truncated`. Every ledger entry stores that `basis`; a resolution delta
+additionally requires a complete basis on both sides, so a pre-fix entry yields `comparable: false`,
+a named `incomparable_reason`, and `resolved_suppressed` instead of an invented resolution.
+
+**One resolver instead of two.** `vault_doctor` and `link_graph` each carried their own copy of the
+union-candidates-then-count logic, which could disagree about the same link. `link_resolver.py` now
+owns resolution with explicit precedence: path relative to the note, vault-relative path, unique
+basename, unique alias. Each verdict records the deciding level. Genuinely ambiguous targets stay
+ambiguous and only carry a proximity candidate for information. The order is documented as a
+hypothesis about Obsidian rather than a verified equivalence, and needs sample-by-sample
+confirmation. `tests/test_link_resolver.py` asserts that the two consumers cannot diverge.
+
+**Conservative triage.** Every broken occurrence now carries `triage_hint`, `triage_reason` and
+`confidence: hint`, with the original totals retained as `broken_link_occurrences` and
+`broken_by_hint`. No hint is a verdict: a Zotero-generated or template source does not prove a
+reference is irrelevant, and a plausible name such as `CCS` is deliberately left `needs_review`
+rather than promoted to actionable.
+
+Read-only acceptance on a ~2,150-note Obsidian Vault:
+
+- 7,158 wikilink occurrences = 914 resolved + 6,177 broken + 67 ambiguous (no occurrence dropped)
+- broken targets whose short name exists elsewhere in the Vault: **0** (no missed resolutions)
+- resolved destinations that are not real Vault paths: **0**
+- ambiguous verdicts carrying fewer than two candidates: **0**
+- doctor and link graph agree exactly on broken and ambiguous counts
+- triage re-attributes 5,537 of 6,177 unresolved occurrences (~90%) to a single auto-generated
+  Zotero note directory, leaving 488 `needs_review`, 100 asset references and 52 template
+  placeholders; the full total is still reported
+- resolution mix: 219 relative-path, 106 vault-path, 586 basename, 3 alias
+- the agenda surfaces the composition via `counts_by_hint`, detects a stale externally deposited
+  compiled card, and two consecutive runs report no new and no resolved items, with the earlier
+  pre-fix entry correctly refusing comparison instead of claiming resolutions
+
+Suite: **204 tests**, ruff clean. The precedence order still needs confirmation against Obsidian's
+documented behaviour on real samples, and the triage ranking is a convenience, not a completeness
+proof.

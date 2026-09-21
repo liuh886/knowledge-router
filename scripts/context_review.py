@@ -16,7 +16,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from context_compile import suggest_target
+from context_compile import compiled_card_name, compiled_root, suggest_target
 from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import scan_notes
@@ -42,7 +42,6 @@ def _quality_items(
     scan,
     *,
     context_id: str | None,
-    limit: int,
 ) -> list[dict[str, Any]]:
     """Aggregate doctor findings into a de-noised, maintained-scope-only agenda.
 
@@ -50,6 +49,10 @@ def _quality_items(
     links). This groups broken and ambiguous targets with occurrence counts and keeps
     only targets reachable from a reviewed Context scope; unscoped findings stay
     available through `quality`.
+
+    The full candidate list is returned. Callers must truncate for display only:
+    a display limit must never change which items count as present, or a smaller
+    limit would look like problems had been resolved.
     """
     if not contexts:
         return []
@@ -82,6 +85,7 @@ def _quality_items(
                     "target": entry["target"],
                     "occurrences": int(entry["occurrences"]),
                     "path": sources[0] if sources else None,
+                    "triage_hint": entry.get("triage_hint"),
                     "reason": (
                         f"{entry['occurrences']} 处链接指向{label} '{entry['target']}'"
                     ),
@@ -109,7 +113,7 @@ def _quality_items(
             str(row.get("target") or row.get("path")),
         )
     )
-    return items[:limit]
+    return items
 
 
 def _stale_card_items(
@@ -119,31 +123,50 @@ def _stale_card_items(
     *,
     context_id: str | None,
 ) -> list[dict[str, Any]]:
+    """Flag compiled cards whose scoped sources changed after the card was written.
+
+    Cards are deposited either inside the Vault (`_compiled/`) or - by default now -
+    in the external compiled area beside the Vault. Both locations are checked, so an
+    externally deposited card can still be detected as stale.
+    """
     items: list[dict[str, Any]] = []
     for row in contexts:
         if context_id and row["id"] != context_id:
             continue
-        target = suggest_target(row)
-        card = config.root_path / PurePosixPath(target)
+        in_vault = suggest_target(row)
+        candidates: list[tuple[str, Path]] = [(in_vault, config.root_path / PurePosixPath(in_vault))]
+        external_name = compiled_card_name(row)
         try:
-            card_mtime = card.stat().st_mtime_ns
-        except OSError:
-            continue
+            external = compiled_root(config) / external_name
+        except ValueError:
+            external = None
+        if external is not None:
+            candidates.append((f"{external.parent.name}/{external_name}", external))
+
         newest = 0
         for record in scan.records:
             if note_in_context(record.path, extract_tags(record.content), row):
                 newest = max(newest, record.mtime_ns)
-        if newest > card_mtime:
-            items.append(
-                {
-                    "kind": "compiled_card_stale",
-                    "context_id": row["id"],
-                    "code": "compiled_card_stale",
-                    "reason": "A scoped source changed after the compiled card was written",
-                    "path": target,
-                    "suggestion": f"contexts compile {row['id']}  # then review and re-stage",
-                }
-            )
+
+        for target, card in candidates:
+            try:
+                card_mtime = card.stat().st_mtime_ns
+            except OSError:
+                continue
+            if newest > card_mtime:
+                items.append(
+                    {
+                        "kind": "compiled_card_stale",
+                        "context_id": row["id"],
+                        "code": "compiled_card_stale",
+                        "reason": "A scoped source changed after the compiled card was written",
+                        "path": target,
+                        "suggestion": (
+                            f"contexts compile {row['id']} --save --content-file <draft>"
+                            "  # then review and re-save"
+                        ),
+                    }
+                )
     return items
 
 
@@ -198,6 +221,29 @@ def _append_entry(
                 os.close(descriptor)
 
 
+_KIND_PRIORITY = {
+    "maintenance": 0,
+    "followup": 1,
+    "compiled_card_stale": 2,
+    "quality": 3,
+}
+# Hints that usually mean machine-generated link noise. They are ranked last for
+# display but are still counted, still written to the ledger, and never dropped.
+_NOISY_HINTS = frozenset({"zotero_generated", "template_placeholder"})
+
+
+def _rank_item(item: dict[str, Any]) -> tuple[Any, ...]:
+    hint = item.get("triage_hint")
+    return (
+        _KIND_PRIORITY.get(str(item["kind"]), 9),
+        1 if hint in _NOISY_HINTS else 0,
+        -int(item.get("occurrences") or 0),
+        str(item.get("code") or ""),
+        str(item.get("target") or item.get("path") or ""),
+        item["id"],
+    )
+
+
 def review_agenda(
     registry: VaultRegistry,
     config: VaultConfig,
@@ -237,30 +283,77 @@ def review_agenda(
             }
         )
     scan = scan_notes(config.root_path)
-    items.extend(
-        _quality_items(config, contexts, scan, context_id=context_id, limit=limit)
-    )
+    items.extend(_quality_items(config, contexts, scan, context_id=context_id))
     items.extend(_stale_card_items(config, scan, contexts, context_id=context_id))
 
     for item in items:
         item["id"] = _item_id(item)
-    items.sort(key=lambda item: (item["kind"], str(item["context_id"]), item["id"]))
+    items.sort(key=_rank_item)
     fingerprint = hashlib.sha256(
         json.dumps(items, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
     counts: dict[str, int] = {}
+    hint_counts: dict[str, int] = {}
     for item in items:
         counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+        hint = item.get("triage_hint")
+        if hint:
+            hint_counts[str(hint)] = hint_counts.get(str(hint), 0) + 1
+
+    # The agenda's basis: an empty agenda only means "clear" when every input was
+    # actually read to completion. Display truncation is never part of the basis.
+    basis = {
+        "item_source": "full",
+        "contexts_registered": len(contexts),
+        "scan_skipped": len(scan.skipped_decode) + len(scan.skipped_io),
+        "poll_status": poll.get("status"),
+        "poll_incomplete": bool(poll.get("scan_incomplete")),
+        "poll_truncated": bool(poll.get("output_truncated"))
+        or int(poll.get("context_count", 0)) > int(poll.get("contexts_checked", 0)),
+        "poll_items_shown": len(poll.get("items", ())),
+    }
+    basis_reasons: list[str] = []
+    if not contexts:
+        basis_reasons.append("no_registered_contexts")
+    if basis["scan_skipped"]:
+        basis_reasons.append("scan_skipped_sources")
+    if basis["poll_incomplete"]:
+        basis_reasons.append("poll_incomplete")
+    if basis["poll_truncated"]:
+        basis_reasons.append("poll_truncated")
+    basis["complete"] = not basis_reasons
+    basis["incomplete_reasons"] = basis_reasons
+    if items:
+        status = "attention"
+    else:
+        status = "clear" if basis["complete"] else "incomplete"
 
     scope = context_id or "*"
     previous = _previous_entry(registry, config, scope) if record else None
     current_ids = {item["id"] for item in items}
     previous_ids = set(previous.get("item_ids", [])) if previous else set()
+    previous_basis = previous.get("basis") if previous else None
+    # A disappearance is only proof of resolution when both sides were recorded over a
+    # complete basis. Older entries (or truncated/incomplete runs) cannot confirm one.
+    incomparable_reason: str | None = None
+    if previous is None:
+        incomparable_reason = "no_previous_entry"
+    elif not isinstance(previous_basis, dict) or previous_basis.get("item_source") != "full":
+        incomparable_reason = "previous_basis_not_full"
+    elif previous_basis.get("complete") is not True:
+        incomparable_reason = "previous_basis_incomplete"
+    elif not basis["complete"]:
+        incomparable_reason = "current_basis_incomplete"
+    comparable = incomparable_reason is None
+    vanished = sorted(previous_ids - current_ids)
     delta = {
         "previous_fingerprint": previous.get("fingerprint") if previous else None,
         "previous_recorded_at": previous.get("recorded_at") if previous else None,
         "new_item_ids": sorted(current_ids - previous_ids),
-        "resolved_item_ids": sorted(previous_ids - current_ids),
+        "resolved_item_ids": vanished if comparable else [],
+        "resolved_suppressed": 0 if comparable else len(vanished),
+        "comparable": comparable,
+        "incomparable_reason": incomparable_reason,
         "unchanged": bool(previous and previous.get("fingerprint") == fingerprint),
     }
     ledger_written = False
@@ -276,6 +369,7 @@ def review_agenda(
                 "fingerprint": fingerprint,
                 "item_ids": sorted(current_ids),
                 "counts_by_kind": counts,
+                "basis": basis,
             },
         )
         ledger_written = True
@@ -284,15 +378,18 @@ def review_agenda(
         "vault_id": config.id,
         "checked_at": now.isoformat(),
         "scope": scope,
-        "status": "attention" if items else "clear",
+        "status": status,
         "item_count": len(items),
         "counts_by_kind": counts,
+        "counts_by_hint": hint_counts,
         "items": items[:limit],
+        "items_truncated": len(items) > limit,
         "fingerprint": fingerprint,
         "delta": delta,
+        "basis": basis,
         "ledger_written": ledger_written,
         "poll_status": poll["status"],
-        "scan_incomplete": poll["scan_incomplete"],
+        "scan_incomplete": (not basis["complete"]),
         "writes_performed": 0,
         "vault_writes": 0,
         "meaning": (
@@ -309,18 +406,29 @@ def format_review_agenda(result: dict[str, Any]) -> str:
         f"状态 {result['status']} · 事项 {result['item_count']} · "
         f"分布 {result['counts_by_kind']} · poll {result['poll_status']}",
     ]
+    if result.get("counts_by_hint"):
+        lines.append(f"线索分布（仅提示，不构成忽略依据）：{result['counts_by_hint']}")
     delta = result["delta"]
     if delta["previous_recorded_at"]:
+        resolved = len(delta["resolved_item_ids"])
+        extra = (
+            f"（另有 {delta['resolved_suppressed']} 项消失但不可比，未确认消解）"
+            if delta.get("resolved_suppressed")
+            else ""
+        )
         lines.append(
             f"较上次（{delta['previous_recorded_at']}）：新增 {len(delta['new_item_ids'])} · "
-            f"已消解 {len(delta['resolved_item_ids'])}"
+            f"已消解 {resolved}{extra}"
             + (" · 无变化" if delta["unchanged"] else "")
         )
     else:
         lines.append("首次记录（已写入外部台账）" if result["ledger_written"] else "未记录")
+    if result["status"] == "incomplete":
+        reasons = "、".join(result["basis"]["incomplete_reasons"]) or "unknown"
+        lines.append(f"⚠ 判定不完整（{reasons}）：当前没有发现不等于没有问题")
     for item in result["items"]:
         target = item.get("path") or item.get("context_id") or ""
         lines.append(f"- [{item['kind']}] {item.get('code')} · {target} · {item.get('reason')}")
-    if result["item_count"] > len(result["items"]):
-        lines.append(f"… 其余 {result['item_count'] - len(result['items'])} 项已省略")
+    if result.get("items_truncated"):
+        lines.append(f"… 其余 {result['item_count'] - len(result['items'])} 项已省略（仅影响显示）")
     return "\n".join(lines)

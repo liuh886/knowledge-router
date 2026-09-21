@@ -20,6 +20,7 @@ capture broker.
 | Context domain | `context_manager.py` | Generic candidate discovery, declared functional scopes, multi-context impact preview; no mutation capability |
 | Context control records | `context_store.py` | External versioned definitions, revision conflicts, source-baseline drift checks; no Vault mutations |
 | Relationship graph | `link_graph.py` | Read-only external wikilink projection, MOC anchors and per-Context neighbourhoods (anchors, related Contexts, hubs, bridges); rebuildable, no Vault mutations |
+| Link resolution | `link_resolver.py` | Single read-only resolution of `[[wikilinks]]` (relative path → vault path → unique basename → unique alias) shared by diagnostics and the graph so the two can never disagree; reports the deciding level, keeps ambiguities ambiguous and records a proximity candidate without acting on it |
 | Compiled cards | `context_compile.py` | Read-only compiled-card bundle (scaffold plus cited evidence) and external broker-plan staging; no Vault mutation outside the capture broker |
 | Deposition loop | `context_review.py` | Bounded, de-noised review agenda plus a durable external ledger with new/resolved deltas; Vault is read only |
 | Context event execution | `context_events.py` | Bind one frozen broker capture to multiple Contexts, publish durable receipts, resume indexing and expose historical event references |
@@ -28,7 +29,7 @@ capture broker.
 | Follow-ups | `context_followups.py` | Typed state-event declarations with timezone validation and due/status views; no independent task store or notification delivery |
 | Due-time interpretation | `due_time.py` | Conservative local/Chinese relative date resolution into an explicit instant; missing details and DST ambiguity fail before capture |
 | Evidence seam | `evidence.py` | Canonical records, quality signals, deterministic federated merge |
-| Read domain | `fts_indexer.py`, `taxonomy_scanner.py`, `vault_doctor.py`, `context_assembler.py`, `quality_analyzer.py` | Verified source snapshot, immutable index, topology, diagnostics, quality, briefs |
+| Read domain | `fts_indexer.py`, `taxonomy_scanner.py`, `vault_doctor.py`, `context_assembler.py`, `quality_analyzer.py` | Verified source snapshot, immutable index, topology, diagnostics (with per-occurrence triage hints), quality, briefs |
 | Project adapter | `project_adapter.py` | Read-only Git metadata/docs, immutable catalog, repository evidence |
 | Write domain | `route_engine.py`, `capture_broker.py` | Route preview, frozen plan, compare-and-swap mutation, recovery |
 | Infrastructure | `registry.py`, `secure_io.py` | External registry, locks, pinned paths, safe file handles |

@@ -113,12 +113,31 @@ involves no write policy at all. This is the recommended way to deposit compiled
 authorizing Vault mutations.
 
 `contexts review [--context ID] [--limit N] [--no-record] --vault NAME [--json]` builds one
-bounded, prioritized agenda from maintenance-due Contexts, due follow-ups and the doctor's
-aggregated broken/ambiguous targets, keeping only findings reachable from a reviewed scope and
-ranking them by occurrence count. It appends an entry to the external `review_ledger.jsonl` and
-reports `new_item_ids`/`resolved_item_ids` deltas against the previous entry for the same scope.
+prioritized agenda from maintenance-due Contexts, due follow-ups, stale compiled cards and the
+doctor's aggregated broken/ambiguous targets, keeping only findings reachable from a reviewed
+scope. It appends an entry to the external `review_ledger.jsonl` and reports
+`new_item_ids`/`resolved_item_ids` deltas against the previous entry for the same scope.
 The command reads the Vault only — no repair, deletion or rewrite — and unscoped findings remain
 available through `quality`.
+
+Three guarantees make the ledger trustworthy rather than merely reassuring:
+
+- **The ledger records the full item set, not the displayed page.** `--limit` truncates the
+  printed list only (`items_truncated` says so). Lowering the limit can never look like problems
+  were resolved.
+- **A disappearance only counts as resolved when both runs had a complete basis.** Each entry
+  stores a `basis` block (registered Contexts, scan skips, poll completeness/truncation). If the
+  previous entry predates this, or either side was incomplete, the delta reports
+  `comparable: false` with an `incomparable_reason` and moves the vanished ids to
+  `resolved_suppressed` instead of claiming a resolution.
+- **An empty agenda is never reported as `clear` over an incomplete basis.** With no registered
+  Context, unreadable sources, or a truncated poll, the status is `incomplete` and names the
+  reasons. Only a complete basis with zero items is `clear`.
+
+Ranking is by kind priority, then impact (occurrence count), with hint-labelled machine noise
+last. `counts_by_hint` shows the composition of the full set; hints appear in the agenda and in
+the ledger, and never remove an item.
+
 Follow-up dates are deliberately unresolved in M1 and no reminder is scheduled.
 
 Both commands accept `--definitions PATH` for an explicit JSON declaration:

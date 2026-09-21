@@ -49,13 +49,24 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Explainable quality signals + Context-aware queue | `quality` |
 | Read-only Context relationship graph | `contexts links` |
 | Compiled Context card (bundle + external save) | `contexts compile` |
-| Bounded review agenda + external deposition ledger | `contexts review` |
+| Review agenda + honest deposition ledger | `contexts review` |
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 31 modules are pure Python standard library. The full suite is **183 tests**. See
+All 32 modules are pure Python standard library. The full suite is **204 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
+
+Two properties are worth knowing before reading any diagnostic number:
+
+- **One resolver.** `link_resolver.py` resolves `[[wikilinks]]` for both the doctor and the
+  relationship graph (relative path → vault path → unique basename → unique alias), so the two can
+  never report different broken/ambiguous counts. Every verdict records the level that decided it;
+  genuine ambiguity stays ambiguous. The precedence order is a documented hypothesis about
+  Obsidian, not a claimed equivalence.
+- **Hints are not verdicts.** Broken-link triage hints (`zotero_generated`, `template_placeholder`,
+  `missing_asset_reference`, `needs_review`) always carry `confidence: hint`, the original totals
+  are retained, and no reference is dismissed because of where it lives.
 
 ---
 
@@ -81,7 +92,7 @@ python scripts/knowledge_router.py contexts compile project:main --vault persona
 # 5b. Write the reviewed card to a parallel area outside the Vault (no write policy needed)
 python scripts/knowledge_router.py contexts compile project:main --save --content-file card.md --vault personal
 
-# 6. Run a bounded review agenda; each run is recorded in an external ledger
+# 6. Run a review agenda; each run is recorded in an external ledger
 python scripts/knowledge_router.py contexts review --vault personal
 
 # 7. Preview a capture, then commit only the reviewed payload
@@ -91,6 +102,13 @@ python scripts/knowledge_router.py capture --vault personal --commit --plan-id <
 
 Capture requires an explicit write policy (`--write-policy append-create`) and either an explicit
 user instruction or a saved `capture_mode=auto`. `write_policy=off` is the default.
+
+`contexts review --limit N` truncates the printed page only: the ledger entry, the fingerprint and
+the new/resolved deltas always use the full item set, so a smaller limit cannot look like items were
+resolved. A disappearance is reported as resolved only when both the previous and the current run
+had a complete basis (otherwise `comparable: false` with a named reason and `resolved_suppressed`),
+and an empty agenda over an incomplete basis (no registered Context, unreadable source, truncated
+poll) returns `incomplete` rather than `clear`.
 
 `examples/contexts.json` is a starting template: edit its `scopes` to match directories that
 actually contain Markdown in your Vault. Registration fails closed if a scope has no readable
@@ -146,12 +164,12 @@ knowledge-router/
 ├── SKILL.md                 # agent-facing command contract
 ├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
 ├── pyproject.toml           # pytest + ruff configuration
-├── scripts/                 # 31 stdlib-only modules
+├── scripts/                 # 32 stdlib-only modules
 ├── examples/contexts.json   # Context definition template
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 183 tests
+└── tests/                   # 204 tests
 ```
 
 ## Deferred (explicitly)

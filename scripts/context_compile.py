@@ -54,6 +54,11 @@ def suggest_target(context: dict[str, Any]) -> str:
     return f"{folder}/{_slug(context['name'])}.md"
 
 
+def compiled_card_name(context: dict[str, Any]) -> str:
+    """Return the default external compiled-area filename for one Context."""
+    return f"{_slug(context['name'])}.md"
+
+
 def _open_items(registry, config, context_id: str, limit: int) -> list[dict[str, Any]]:
     followups = list_followups(registry, config, context_id, limit=limit)
     return [

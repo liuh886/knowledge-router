@@ -854,9 +854,11 @@ def _run_maintenance_cycle(
                 "notes_scanned": full_doctor["notes_scanned"],
                 "broken_links": counts["broken_link_occurrences"],
                 "broken_targets": counts["broken_targets"],
+                "broken_by_hint": full_doctor.get("broken_by_hint", {}),
                 "ambiguous_links": counts["ambiguous_link_occurrences"],
                 "ambiguous_targets": counts["ambiguous_targets"],
                 "orphans": counts["orphans"],
+                "scan_complete": full_doctor.get("scan_complete", True),
             },
         )
         _append_jsonl(

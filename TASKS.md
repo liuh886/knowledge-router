@@ -50,11 +50,27 @@ from host-specific activation gates.
       compiled area beside the Vault (`<vault>_compiled/`, `--out-root` override) with no write
       policy involved. Writing inside the Vault remains available via `--stage` plus
       `capture --commit` under `append-create`.
-- [x] Deposition loop: `contexts review` produces a bounded, prioritized agenda (maintenance-due
-      Contexts, due follow-ups, aggregated maintained-scope doctor findings) and appends a durable
-      external ledger entry; re-runs report new and resolved items. The Vault is read-only and
-      unscoped findings remain available through `quality`.
-- [x] `tests/` suite: **188 tests**, ruff- and bytecode-clean.
+- [x] Deposition loop: `contexts review` produces a prioritized agenda (maintenance-due Contexts,
+      due follow-ups, stale compiled cards, aggregated maintained-scope doctor findings) and
+      appends a durable external ledger entry; re-runs report new and resolved items. The Vault is
+      read-only and unscoped findings remain available through `quality`.
+      `--limit` truncates the printed page only: the ledger, the fingerprint and the deltas always
+      use the full item set, so a smaller limit cannot look like a resolution. Each entry stores a
+      `basis` block and a disappearance counts as resolved only when both runs had a complete
+      basis, otherwise `comparable: false` with a named reason and `resolved_suppressed`. An empty
+      agenda over an incomplete basis (no registered Context, unreadable source, truncated poll)
+      returns `incomplete`, never `clear`.
+- [x] Single link resolver: `link_resolver.py` owns `[[wikilink]]` resolution for both
+      `vault_doctor` and `link_graph` (relative path, vault path, unique basename, unique alias),
+      so diagnostics and the relationship graph cannot disagree. Verdicts record the deciding
+      level; genuine ambiguity stays ambiguous and only carries a proximity candidate. The
+      precedence is documented as an unverified hypothesis, not a claimed Obsidian equivalence.
+- [x] Conservative link triage: each broken occurrence carries `triage_hint` + `triage_reason`
+      with `confidence: hint` and the original totals are retained (`broken_link_occurrences`,
+      `broken_by_hint`). A hint is never a verdict; no reference is dismissed because of its
+      source, and no target is called actionable from its name alone.
+- [x] `_stale_card_items` checks the external compiled area as well as any in-Vault card.
+- [x] `tests/` suite: **204 tests**, ruff- and bytecode-clean.
 
 ## Open
 
@@ -63,6 +79,13 @@ from host-specific activation gates.
       read-only conversation hook is opt-in and defaults to disabled. Activation needs a verified
       supervisor/restart owner and a rollback rehearsal; see below. This is operational, not a
       missing code requirement.
+      Progress: on the reference host the hook was switched on and the live process logged the
+      hot-reload, and the real hook function returns cited evidence for a new session and nothing
+      for a continuing one. The invocation path was also corrected from `python3` to `python` in
+      both the live rule files and the deploy templates. A live conversational end-to-end pass is
+      still unobserved and `search` leaves no audit trace, so that gate stays open. Note that the
+      host's `python3` placeholder problem also affects other tool-invocation lines in the host
+      rule files; it does not affect the automatic hook, which uses `sys.executable`.
 - [ ] **Remote transport delivery** (Telegram/Matrix/other) on top of the local JSONL sink. This is
       an adapter-specific gate and is never implied by `contexts tick`.
 - [ ] **Automatic state extraction from legacy prose** with evidence-backed review. Explicit

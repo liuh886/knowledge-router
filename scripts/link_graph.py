@@ -18,8 +18,14 @@ from typing import Any
 from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import ScanReport, scan_notes
+from link_resolver import (
+    STATUS_AMBIGUOUS,
+    STATUS_RESOLVED,
+    STATUS_UNRESOLVED,
+    LinkResolver,
+    extract_links,
+)
 from registry import FileLock, VaultConfig, VaultRegistry, atomic_json_write
-from vault_doctor import _aliases, _links
 
 _FILENAME = "link_graph.json"
 _MOC_TOKENS = frozenset({"moc", "index", "索引", "总目录", "總目錄"})
@@ -36,65 +42,31 @@ def build_link_graph(
 ) -> dict[str, Any]:
     """Resolve wikilinks into a deterministic, external relationship projection.
 
-    When ``vault_root`` is supplied, non-Markdown attachments are included in link
-    resolution so that ``![[image.png]]`` style references are not miscounted as
-    broken. Edges are only emitted between notes; asset references are reported
-    separately through ``asset_links``.
+    Resolution is shared with the doctor (``link_resolver``) so diagnostics and the
+    graph can never disagree about the same link. When ``vault_root`` is supplied,
+    non-Markdown attachments participate in resolution so ``![[image.png]]`` embeds
+    are counted as ``asset_links`` instead of being reported as broken. Edges are
+    only emitted between notes.
     """
-    by_path: dict[str, str] = {}
-    by_stem: dict[str, set[str]] = defaultdict(set)
-    by_alias: dict[str, set[str]] = defaultdict(set)
-    asset_paths: set[str] = set()
-    for record in scan.records:
-        by_path[record.path.removesuffix(".md").casefold()] = record.path
-        by_stem[Path(record.path).stem.casefold()].add(record.path)
-        for alias in _aliases(record.content):
-            by_alias[alias.casefold()].add(record.path)
-    if vault_root is not None:
-        root = vault_root.resolve()
-        for asset in root.rglob("*"):
-            if not asset.is_file() or asset.suffix.casefold() == ".md":
-                continue
-            try:
-                relative = asset.relative_to(root)
-                asset.resolve().relative_to(root)
-            except (OSError, ValueError):
-                continue
-            if any(part.startswith(".") for part in relative.parts):
-                continue
-            relative_path = relative.as_posix()
-            asset_paths.add(relative_path)
-            by_path[relative_path.casefold()] = relative_path
-            by_stem[asset.name.casefold()].add(relative_path)
-            by_stem[asset.stem.casefold()].add(relative_path)
+    resolver = LinkResolver.from_scan(scan, vault_root=vault_root)
+    asset_paths = resolver.assets
 
     edges: set[tuple[str, str]] = set()
     unresolved = 0
     ambiguous = 0
     asset_links = 0
     for record in scan.records:
-        parent = PurePosixPath(record.path).parent
-        for link in _links(record.path, record.content):
-            folded = link.target.casefold()
-            local = PurePosixPath(parent, link.target).as_posix().casefold()
-            candidates: set[str] = set()
-            if local in by_path:
-                candidates.add(by_path[local])
-            if folded in by_path:
-                candidates.add(by_path[folded])
-            candidates.update(
-                by_stem.get(PurePosixPath(link.target).name.casefold(), set())
-            )
-            candidates.update(by_alias.get(folded, set()))
-            if len(candidates) == 1:
-                destination = next(iter(candidates))
+        for link in extract_links(record.path, record.content):
+            decision = resolver.resolve(link)
+            if decision.status == STATUS_RESOLVED:
+                destination = decision.destination
                 if destination in asset_paths:
                     asset_links += 1
                 elif destination != record.path:
                     edges.add((record.path, destination))
-            elif not candidates:
+            elif decision.status == STATUS_UNRESOLVED:
                 unresolved += 1
-            else:
+            elif decision.status == STATUS_AMBIGUOUS:
                 ambiguous += 1
 
     degrees: dict[str, list[int]] = {record.path: [0, 0] for record in scan.records}
@@ -110,6 +82,7 @@ def build_link_graph(
         "unresolved_links": unresolved,
         "ambiguous_links": ambiguous,
         "asset_links": asset_links,
+        "scan_complete": not (scan.skipped_decode or scan.skipped_io),
         "mocs": sorted(path for path in degrees if _is_moc(path)),
         "degrees": degrees,
         "tags": {

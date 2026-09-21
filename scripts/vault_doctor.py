@@ -4,82 +4,122 @@
 from __future__ import annotations
 
 import argparse
-import bisect
 import hashlib
 import json
 import re
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from fts_indexer import ScanReport, scan_notes
+from link_resolver import (
+    STATUS_AMBIGUOUS,
+    STATUS_RESOLVED,
+    STATUS_UNRESOLVED,
+    LinkReference,
+    LinkResolver,
+    aliases,
+    extract_links,
+)
 
-_WIKILINK = re.compile(r"\[\[([^\]\n]+)\]\]")
 _DAILY_PATH = re.compile(
     r"(?:^|/)(?:daily|journal|journals|logs?)(?:/|$)", re.IGNORECASE
 )
 _DAILY_NAME = re.compile(r"^\d{4}[-_.]\d{2}[-_.]\d{2}$")
 
+# Triage hints only. None of these mean "safe to ignore": every hint is a
+# heuristic about where a human should look first, and everything else stays
+# explicit `needs_review`.
+TRIAGE_ZOTERO = "zotero_generated"
+TRIAGE_TEMPLATE = "template_placeholder"
+TRIAGE_ASSET = "missing_asset_reference"
+TRIAGE_REVIEW = "needs_review"
 
-@dataclass(frozen=True, slots=True)
-class LinkReference:
-    source: str
-    line: int
-    target: str
+_ZOTERO_DIR = re.compile(r"zotero", re.IGNORECASE)
+_TEMPLATE_DIRS = frozenset({"template", "templates", "模板"})
+_PLACEHOLDER_TARGETS = frozenset(
+    {
+        "link",
+        "links",
+        "链接",
+        "双向链接",
+        "任务",
+        "日程",
+        "决策建议",
+        "项目",
+        "area",
+        "resource",
+        "resources",
+        "资源",
+    }
+)
+_ASSET_SUFFIXES = frozenset(
+    {
+        ".pdf",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".webp",
+        ".xlsx",
+        ".xls",
+        ".docx",
+        ".doc",
+        ".pptx",
+        ".ppt",
+        ".csv",
+        ".zip",
+        ".mp4",
+        ".mov",
+        ".ipynb",
+    }
+)
 
-    def to_dict(self) -> dict[str, Any]:
-        return {"source": self.source, "line": self.line, "target": self.target}
+# Backwards-compatible aliases; resolution itself now lives in link_resolver.
+_aliases = aliases
+_links = extract_links
 
 
-def _aliases(content: str) -> list[str]:
-    frontmatter = re.match(r"\A---\s*\r?\n(.*?)\r?\n---", content, re.DOTALL)
-    if not frontmatter:
-        return []
-    lines = frontmatter.group(1).splitlines()
-    values: list[str] = []
-    for index, line in enumerate(lines):
-        match = re.match(r"(?i)^aliases?\s*:\s*(.*?)\s*$", line)
-        if not match:
-            continue
-        inline = match.group(1).strip()
-        if inline.startswith("[") and inline.endswith("]"):
-            values.extend(inline[1:-1].split(","))
-        elif inline:
-            values.append(inline)
-        else:
-            for nested in lines[index + 1 :]:
-                if nested and not nested[0].isspace():
-                    break
-                item = nested.strip()
-                if item.startswith("-"):
-                    values.append(item.removeprefix("-").strip())
-        break
-    return [item.strip().strip("'\"") for item in values if item.strip().strip("'\"")]
+def triage_hint(source: str, target: str) -> tuple[str, str, str]:
+    """Classify one *occurrence* with a reason, never as a final verdict.
 
-
-def _normalize_target(value: str) -> str:
-    target = value.split("|", 1)[0].split("#", 1)[0].strip().replace("\\", "/")
-    target = target.removesuffix(".md").strip("/")
-    return PurePosixPath(target).as_posix() if target else ""
-
-
-def _links(path: str, content: str) -> list[LinkReference]:
-    references: list[LinkReference] = []
-    line_starts = [0]
-    line_starts.extend(match.end() for match in re.finditer(r"\r\n|\r|\n", content))
-    for match in _WIKILINK.finditer(content):
-        target = _normalize_target(match.group(1))
-        if not target or "{{" in target or "}}" in target:
-            continue
-        references.append(
-            LinkReference(
-                source=path,
-                line=bisect.bisect_right(line_starts, match.start()),
-                target=target,
-            )
+    Returns ``(hint, reason, confidence)``. Confidence is always ``"hint"``: a
+    Zotero-generated note or a template can still contain a reference that matters,
+    and a target whose name looks like a concept must not be promoted to
+    "actionable" by name alone.
+    """
+    parts = PurePosixPath(source).parts
+    if any(_ZOTERO_DIR.search(part) for part in parts):
+        return (
+            TRIAGE_ZOTERO,
+            "source sits in an auto-generated Zotero note directory; confirm before dismissing",
+            "hint",
         )
-    return references
+    if any(part.casefold() in _TEMPLATE_DIRS for part in parts):
+        return (
+            TRIAGE_TEMPLATE,
+            "source sits in a template directory",
+            "hint",
+        )
+    folded = target.casefold()
+    if folded in _PLACEHOLDER_TARGETS:
+        return (
+            TRIAGE_TEMPLATE,
+            "target is a known boilerplate placeholder name; confirm before dismissing",
+            "hint",
+        )
+    if PurePosixPath(target).suffix.casefold() in _ASSET_SUFFIXES:
+        return (
+            TRIAGE_ASSET,
+            "target names a file attachment rather than a note",
+            "hint",
+        )
+    return (
+        TRIAGE_REVIEW,
+        "no heuristic applies; needs a human decision",
+        "hint",
+    )
 
 
 def _daily_or_template(path: str) -> bool:
@@ -87,10 +127,42 @@ def _daily_or_template(path: str) -> bool:
     return (
         _DAILY_PATH.search(path) is not None
         or _DAILY_NAME.match(pure.stem) is not None
-        or any(
-            part.casefold() in {"template", "templates", "模板"} for part in pure.parts
-        )
+        or any(part.casefold() in _TEMPLATE_DIRS for part in pure.parts)
     )
+
+
+def _group_targets(
+    items: list[dict[str, Any]], *, key: str = "target"
+) -> list[dict[str, Any]]:
+    """Group occurrence rows by target, keeping original totals and hint mix."""
+    groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    for item in items:
+        groups[str(item[key])].append(item)
+    rows: list[dict[str, Any]] = []
+    for target, entries in sorted(
+        groups.items(), key=lambda pair: (-len(pair[1]), pair[0].casefold())
+    ):
+        hints: dict[str, int] = defaultdict(int)
+        for entry in entries:
+            hints[str(entry.get("triage_hint", TRIAGE_REVIEW))] += 1
+        dominant = sorted(hints.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+        row: dict[str, Any] = {
+            "target": target,
+            "occurrences": len(entries),
+            "sources": sorted({str(entry["source"]) for entry in entries})[:20],
+            "triage_hint": dominant,
+            "triage_hint_counts": dict(sorted(hints.items())),
+        }
+        candidates = sorted(
+            {str(candidate) for entry in entries for candidate in entry.get("candidates", ())}
+        )
+        if candidates:
+            row["candidates"] = candidates[:20]
+        proximity = sum(1 for entry in entries if entry.get("nearest_unique"))
+        if proximity:
+            row["proximity_unique"] = proximity
+        rows.append(row)
+    return rows
 
 
 def diagnose_vault(
@@ -102,61 +174,36 @@ def diagnose_vault(
     """Return deterministic diagnostics without touching source files."""
     root = vault_root.resolve()
     scan = source_scan or scan_notes(root)
-    by_path: dict[str, str] = {}
-    by_stem: dict[str, set[str]] = defaultdict(set)
-    by_alias: dict[str, set[str]] = defaultdict(set)
+    resolver = LinkResolver.from_scan(scan, vault_root=root)
+
     outgoing: dict[str, list[LinkReference]] = defaultdict(list)
     incoming: dict[str, int] = defaultdict(int)
-
     for record in scan.records:
-        key = record.path.removesuffix(".md").casefold()
-        by_path[key] = record.path
-        by_stem[Path(record.path).stem.casefold()].add(record.path)
-        for alias in _aliases(record.content):
-            by_alias[alias.casefold()].add(record.path)
-        outgoing[record.path].extend(_links(record.path, record.content))
-
-    asset_count = 0
-    for asset in root.rglob("*"):
-        if not asset.is_file() or asset.suffix.casefold() == ".md":
-            continue
-        try:
-            relative = asset.relative_to(root)
-            asset.resolve().relative_to(root)
-        except (OSError, ValueError):
-            continue
-        if any(part.startswith(".") for part in relative.parts):
-            continue
-        relative_path = relative.as_posix()
-        by_path[relative_path.casefold()] = relative_path
-        by_stem[asset.stem.casefold()].add(relative_path)
-        asset_count += 1
+        outgoing[record.path].extend(extract_links(record.path, record.content))
 
     broken: list[dict[str, Any]] = []
     ambiguous: list[dict[str, Any]] = []
     resolved_count = 0
+    level_counts: dict[str, int] = defaultdict(int)
     for source, links in outgoing.items():
-        source_parent = PurePosixPath(source).parent
         for link in links:
-            target_folded = link.target.casefold()
-            local = PurePosixPath(source_parent, link.target).as_posix().casefold()
-            candidates: set[str] = set()
-            if local in by_path:
-                candidates.add(by_path[local])
-            if target_folded in by_path:
-                candidates.add(by_path[target_folded])
-            candidates.update(
-                by_stem.get(PurePosixPath(link.target).name.casefold(), set())
-            )
-            candidates.update(by_alias.get(link.target.casefold(), set()))
-            if len(candidates) == 1:
-                destination = next(iter(candidates))
-                incoming[destination] += 1
+            decision = resolver.resolve(link)
+            level_counts[decision.level] += 1
+            if decision.status == STATUS_RESOLVED:
+                incoming[decision.destination] += 1
                 resolved_count += 1
-            elif not candidates:
-                broken.append(link.to_dict())
-            else:
-                ambiguous.append({**link.to_dict(), "candidates": sorted(candidates)})
+            elif decision.status == STATUS_UNRESOLVED:
+                hint, reason, confidence = triage_hint(link.source, link.target)
+                broken.append(
+                    {
+                        **link.to_dict(),
+                        "triage_hint": hint,
+                        "triage_reason": reason,
+                        "triage_confidence": confidence,
+                    }
+                )
+            elif decision.status == STATUS_AMBIGUOUS:
+                ambiguous.append(decision.to_dict())
 
     orphans = [
         record.path
@@ -165,36 +212,14 @@ def diagnose_vault(
         and not outgoing[record.path]
         and (include_daily_orphans or not _daily_or_template(record.path))
     ]
-    broken_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
+    broken_targets = _group_targets(broken)
+    ambiguous_targets = _group_targets(ambiguous)
+    broken_by_hint: dict[str, int] = defaultdict(int)
     for item in broken:
-        broken_groups[str(item["target"])].append(item)
-    broken_targets = [
-        {
-            "target": target,
-            "occurrences": len(items),
-            "sources": sorted({str(item["source"]) for item in items})[:20],
-        }
-        for target, items in sorted(
-            broken_groups.items(), key=lambda pair: (-len(pair[1]), pair[0].casefold())
-        )
-    ]
-    ambiguous_groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
-    for item in ambiguous:
-        ambiguous_groups[str(item["target"])].append(item)
-    ambiguous_targets = [
-        {
-            "target": target,
-            "occurrences": len(items),
-            "sources": sorted({str(item["source"]) for item in items})[:20],
-            "candidates": sorted(
-                {str(candidate) for item in items for candidate in item["candidates"]}
-            )[:20],
-        }
-        for target, items in sorted(
-            ambiguous_groups.items(),
-            key=lambda pair: (-len(pair[1]), pair[0].casefold()),
-        )
-    ]
+        broken_by_hint[str(item["triage_hint"])] += 1
+    # Informational only: how many ambiguities a proximity rule would collapse.
+    # This never changes the reported ambiguity, because that rule is unverified.
+    ambiguous_proximity = sum(1 for item in ambiguous if item.get("nearest_unique"))
     manifest = "\n".join(
         f"{item.path}:{item.checksum}" for item in scan.records
     ).encode()
@@ -203,15 +228,25 @@ def diagnose_vault(
         "vault_root": str(root),
         "vault_manifest_sha256": hashlib.sha256(manifest).hexdigest(),
         "notes_scanned": len(scan.records),
-        "assets_scanned": asset_count,
+        "assets_scanned": len(resolver.assets),
         "links_resolved": resolved_count,
+        "resolution_levels": dict(sorted(level_counts.items())),
         "broken_links": broken,
         "broken_targets": broken_targets,
+        "broken_by_hint": dict(sorted(broken_by_hint.items())),
+        "broken_link_occurrences": len(broken),
         "ambiguous_links": ambiguous,
         "ambiguous_targets": ambiguous_targets,
+        "ambiguous_link_occurrences": len(ambiguous),
+        "ambiguous_proximity_unique": ambiguous_proximity,
         "orphans": sorted(orphans),
         "skipped_decode": list(scan.skipped_decode),
         "skipped_io": list(scan.skipped_io),
+        "scan_complete": not (scan.skipped_decode or scan.skipped_io),
+        "triage_note": (
+            "Triage hints are heuristics, not verdicts: no hint means a reference is safe "
+            "to ignore, and no target is called 'actionable' from its name alone."
+        ),
     }
 
 
@@ -227,9 +262,15 @@ def diagnostic_counts(report: dict[str, Any]) -> dict[str, int]:
             "orphans": int(existing["orphans"]),
         }
     return {
-        "broken_link_occurrences": len(report.get("broken_links", [])),
+        "broken_link_occurrences": int(
+            report.get("broken_link_occurrences", len(report.get("broken_links", [])))
+        ),
         "broken_targets": len(report.get("broken_targets", [])),
-        "ambiguous_link_occurrences": len(report.get("ambiguous_links", [])),
+        "ambiguous_link_occurrences": int(
+            report.get(
+                "ambiguous_link_occurrences", len(report.get("ambiguous_links", []))
+            )
+        ),
         "ambiguous_targets": len(report.get("ambiguous_targets", [])),
         "orphans": len(report.get("orphans", [])),
     }
@@ -262,7 +303,10 @@ def summarize_diagnostics(
         "notes_scanned": report["notes_scanned"],
         "assets_scanned": report["assets_scanned"],
         "links_resolved": report["links_resolved"],
+        "resolution_levels": dict(report.get("resolution_levels", {})),
         "counts": counts,
+        "broken_by_hint": dict(report.get("broken_by_hint", {})),
+        "ambiguous_proximity_unique": int(report.get("ambiguous_proximity_unique", 0)),
         "top_broken_targets": [
             bounded_target(item) for item in broken_targets[:detail_limit]
         ],
@@ -277,18 +321,27 @@ def summarize_diagnostics(
         },
         "skipped_decode": list(report.get("skipped_decode", [])),
         "skipped_io": list(report.get("skipped_io", [])),
+        "scan_complete": bool(
+            report.get("scan_complete", not report.get("skipped_decode") and not report.get("skipped_io"))
+        ),
+        "triage_note": report.get("triage_note"),
     }
 
 
 def format_diagnostics_summary(report: dict[str, Any]) -> str:
     """Render one concise human-readable line from either report representation."""
     counts = diagnostic_counts(report)
+    hints = report.get("broken_by_hint") or {}
+    hint_text = ", ".join(f"{name} {value}" for name, value in sorted(hints.items()))
+    incomplete = "" if report.get("scan_complete", True) else " (incomplete scan)"
     return (
         f"{report['status']}: {report['notes_scanned']} notes, "
         f"{counts['broken_link_occurrences']} broken link occurrences across "
         f"{counts['broken_targets']} targets, "
         f"{counts['ambiguous_link_occurrences']} ambiguous occurrences, "
         f"{counts['orphans']} orphan candidates"
+        + (f"; triage hints: {hint_text}" if hint_text else "")
+        + incomplete
     )
 
 

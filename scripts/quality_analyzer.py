@@ -20,6 +20,8 @@ def vault_quality_signals(
     signals: list[QualitySignal] = []
     for item in report.get("broken_targets", []):
         sources = list(item.get("sources", []))
+        hint = item.get("triage_hint")
+        hint_text = f" Triage hint: {hint}." if hint else ""
         signals.append(
             QualitySignal(
                 kind="broken_link",
@@ -29,13 +31,15 @@ def vault_quality_signals(
                 path=sources[0] if sources else None,
                 reason=(
                     f"{item['occurrences']} link occurrence(s) cannot resolve target "
-                    f"{item['target']!r}."
+                    f"{item['target']!r}.{hint_text}"
                 ),
                 suggestion="Review the target spelling or create the intended note manually.",
                 evidence={
                     "target": item["target"],
                     "occurrences": item["occurrences"],
                     "sources": sources,
+                    "triage_hint": hint,
+                    "triage_hint_counts": dict(item.get("triage_hint_counts", {})),
                 },
             )
         )
@@ -58,6 +62,7 @@ def vault_quality_signals(
                     "occurrences": item["occurrences"],
                     "sources": sources,
                     "candidates": list(item.get("candidates", [])),
+                    "proximity_unique": int(item.get("proximity_unique", 0)),
                 },
             )
         )
