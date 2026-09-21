@@ -19,6 +19,7 @@ capture broker.
 | Application | `vault_service.py` | Shared attach/sync/status/search orchestration |
 | Context domain | `context_manager.py` | Generic candidate discovery, declared functional scopes, multi-context impact preview; no mutation capability |
 | Context control records | `context_store.py` | External versioned definitions, revision conflicts, source-baseline drift checks; no Vault mutations |
+| Relationship graph | `link_graph.py` | Read-only external wikilink projection, MOC anchors and per-Context neighbourhoods (anchors, related Contexts, hubs, bridges); rebuildable, no Vault mutations |
 | Context event execution | `context_events.py` | Bind one frozen broker capture to multiple Contexts, publish durable receipts, resume indexing and expose historical event references |
 | Explicit state projection | `context_state.py` | Rebuild source-verified state declarations and replacement chains; preserve conflicting heads and logical lifecycle history |
 | Maintenance policy | `context_maintenance.py` | Opt-in review queue from registered policies, source baselines and verified review/lifecycle state; no scheduler or automatic repair |

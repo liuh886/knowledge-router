@@ -76,6 +76,16 @@ candidates. Discovery scans current readable sources, not a potentially stale ca
 returns all matching Contexts, source samples, alias ambiguity, and follow-up detection.
 Samples establish scope membership; they are not claimed to be relevant historical
 answers. Names require explicit matching; no relationship is invented from co-occurrence.
+
+`contexts links NAME_OR_ID --vault NAME [--rebuild] [--json]` reads one Context's resolved
+wikilink neighbourhood. It reuses the durable external `link_graph.json` projection (rebuilding
+it only when absent or when `--rebuild` is given) and reports topic anchors (MOC/index notes),
+related Contexts ranked by crossing links with scope overlap excluded, hub notes by degree and
+cross-scope bridge notes. Markdown and attachment targets resolve by path, stem and frontmatter
+alias; attachment references become `asset_links` and never become note edges. Only the external
+projection is written; the Vault is not modified, and no relationship is inferred from
+co-occurrence. `definitions_stale` is reported when the registered definition baseline predates
+the graph's source generation.
 Follow-up dates are deliberately unresolved in M1 and no reminder is scheduled.
 
 Both commands accept `--definitions PATH` for an explicit JSON declaration:
