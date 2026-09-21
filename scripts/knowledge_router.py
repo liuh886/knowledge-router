@@ -341,6 +341,9 @@ def _parser() -> argparse.ArgumentParser:
     compile_parser.add_argument("--title")
     compile_parser.add_argument("--idempotency-key")
     compile_parser.add_argument("--limit", type=int, default=8)
+    compile_parser.add_argument(
+        "--query", help="Topic terms; defaults to the Context name and aliases"
+    )
     compile_parser.add_argument("--vault")
     compile_parser.add_argument("--json", action="store_true")
     review = context_sub.add_parser(
@@ -748,6 +751,7 @@ def main() -> int:
                     args.selector,
                     limit=args.limit,
                     target=args.target,
+                    query=getattr(args, "query", None),
                 )
                 _emit(
                     bundle,

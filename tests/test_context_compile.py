@@ -39,7 +39,7 @@ def vault(tmp_path):
     (root / "Area" / "_compiled").mkdir(parents=True)
     (root / "Area" / "MOC.md").write_text("# MOC\n[[Topic]]", encoding="utf-8")
     (root / "Area" / "Topic.md").write_text(
-        "# Topic\n\n## 进展\nprogress alpha", encoding="utf-8"
+        "# Topic\n\n## 进展\nArea progress alpha", encoding="utf-8"
     )
     (root / "Area" / "Other.md").write_text("# Other\nmisc", encoding="utf-8")
     registry = VaultRegistry(tmp_path / "state")
@@ -67,6 +67,7 @@ def test_compile_bundle_is_read_only_and_cited(vault):
     bundle = compile_context(registry, config, "research:area", limit=5)
     assert bundle["status"] == "compiled_bundle"
     assert bundle["writes_performed"] == 0
+    assert bundle["query"] == "Area"
     assert bundle["suggested_target"] == "Area/_compiled/Area.md"
     assert bundle["suggested_target_directory_exists"] is True
     assert bundle["existing_card"] is False

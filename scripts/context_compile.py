@@ -138,6 +138,17 @@ def _template(
     return "\n".join(lines)
 
 
+def _default_query(context: dict[str, Any]) -> str:
+    seen: set[str] = set()
+    parts: list[str] = []
+    for value in (context["name"], *(context.get("aliases") or [])):
+        key = str(value).casefold()
+        if key and key not in seen:
+            seen.add(key)
+            parts.append(str(value))
+    return " ".join(parts)
+
+
 def compile_context(
     registry: VaultRegistry,
     config: VaultConfig,
@@ -145,12 +156,19 @@ def compile_context(
     *,
     limit: int = 8,
     target: str | None = None,
+    query: str | None = None,
 ) -> dict[str, Any]:
     """Assemble a read-only compiled-card bundle with a cited scaffold."""
     if type(limit) is not int or not 1 <= limit <= 30:
         raise ValueError("Compile limit must be between 1 and 30")
-    brief = brief_context(registry, config, selector, query="", limit=limit)
-    context = brief["context"]
+    version = load_context_version(registry, config)
+    if version is None:
+        raise ValueError("No registered Context definitions; run contexts register first")
+    context = select_context(version["definitions"]["contexts"], selector)
+    effective_query = query if query is not None else _default_query(context)
+    brief = brief_context(
+        registry, config, context["id"], query=effective_query, limit=limit
+    )
     followups = _open_items(registry, config, context["id"], limit)
     graph = load_link_graph(registry, config)
     anchors = scope_anchors(graph, context["scopes"], limit=limit)
@@ -172,6 +190,7 @@ def compile_context(
         "definition_revision": brief["definition_revision"],
         "source_generation": brief["source_generation"],
         "source_count": brief["source_count"],
+        "query": effective_query,
         "recorded_state": brief["recorded_state"],
         "open_followups": followups,
         "anchors": anchors,
