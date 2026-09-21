@@ -98,6 +98,13 @@ production state into an arbitrary location or another Vault.
 - Use `contexts check --vault <name> --json` to compare current source paths/content against
   the registered baseline. A changed source may be an ordinary edit; it is not automatically
   a quality defect. Checks do not repair notes, guess moved paths or reset the baseline.
+- Read one Context's resolved wikilink neighbourhood with
+  `contexts links NAME_OR_ID --vault <name> [--rebuild] [--json]`. It reports the topic
+  anchors (MOC/index notes), related Contexts ranked by crossing links, hub notes and
+  cross-scope bridges. The graph is a rebuildable external projection (`link_graph.json`)
+  over links the Vault already states; `--rebuild` refreshes it from a live scan instead of
+  reusing the stored generation. Attachment embeds are counted separately and never become
+  note edges. No relationship is inferred from co-occurrence, and no Vault source is written.
 
 - Search before answering Vault-specific questions:
   `python scripts/knowledge_router.py search "<query>" --vault <name> --json`

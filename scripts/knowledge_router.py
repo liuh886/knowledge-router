@@ -31,6 +31,7 @@ from maintenance_cycle import (
 from due_time import resolve_due_time
 from evidence import EvidenceRecord, merge_evidence
 from fts_indexer import audit_index, scan_notes
+from link_graph import context_links, format_context_links
 from project_adapter import (
     list_projects as list_catalog_projects,
 )
@@ -314,6 +315,16 @@ def _parser() -> argparse.ArgumentParser:
     coverage.add_argument("--vault")
     coverage.add_argument("--limit", type=int, default=20)
     coverage.add_argument("--json", action="store_true")
+    links = context_sub.add_parser(
+        "links", help="Show one Context's read-only wikilink relationship graph"
+    )
+    links.add_argument("selector")
+    links.add_argument("--limit", type=int, default=12)
+    links.add_argument(
+        "--rebuild", action="store_true", help="Rebuild the external link graph first"
+    )
+    links.add_argument("--vault")
+    links.add_argument("--json", action="store_true")
     history = context_sub.add_parser(
         "history", help="List applied event references for one Context"
     )
@@ -664,6 +675,20 @@ def main() -> int:
                 result = maintenance_coverage(registry, config, limit=args.limit)
                 _emit(result, json_output=args.json)
                 return 2 if result["scan_incomplete"] else 0
+            elif args.context_command == "links":
+                result = context_links(
+                    registry,
+                    config,
+                    args.selector,
+                    limit=args.limit,
+                    rebuild=args.rebuild,
+                )
+                _emit(
+                    result,
+                    json_output=args.json,
+                    message=format_context_links(result),
+                )
+                return 0
             elif args.context_command == "state":
                 result = project_state(
                     registry, config, args.context_id, limit=args.limit

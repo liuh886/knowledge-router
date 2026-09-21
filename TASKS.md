@@ -37,7 +37,11 @@ from host-specific activation gates.
 - [x] Cross-Vault identity safety: same-named Contexts stay partitioned by stable Vault id.
 - [x] Unified `status --json` combining attachment/index facts, coverage, receipts, baseline,
       failed runs and the delivery boundary.
-- [x] `tests/` suite: **153 tests**, ruff- and bytecode-clean.
+- [x] Read-only Context relationship graph: `contexts links` promotes the wikilink graph to a
+      durable external projection (`link_graph.json`), resolving Markdown and attachment targets,
+      detecting MOC/index anchors, and reporting related Contexts, hub notes and cross-scope
+      bridges. No relationship is inferred from co-occurrence; no Vault source is written.
+- [x] `tests/` suite: **161 tests**, ruff- and bytecode-clean.
 
 ## Open
 
@@ -50,6 +54,9 @@ from host-specific activation gates.
       an adapter-specific gate and is never implied by `contexts tick`.
 - [ ] **Automatic state extraction from legacy prose** with evidence-backed review. Explicit
       declarations are the supported mechanism today.
+- [ ] **Graph-aware retrieval.** Context `include/exclude/tags` filters and ranking that uses
+      link distance / anchors, to improve precision where a folder scope is too broad. The
+      `contexts links` projection is the read-only foundation for this.
 - [ ] **Optional semantic retrieval sidecar** — only if a broader benchmark shows a measured recall
       gap. Current lexical/bigram/alias retrieval meets every acceptance gate.
 
