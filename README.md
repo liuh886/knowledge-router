@@ -48,7 +48,7 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Read-only Git project catalog + federated retrieval | `projects *`, `search --projects`, `brief --projects` |
 | Explainable quality signals + Context-aware queue | `quality` |
 | Read-only Context relationship graph | `contexts links` |
-| Compiled Context card (bundle + staged draft) | `contexts compile` |
+| Compiled Context card (bundle + external save) | `contexts compile` |
 | Bounded review agenda + external deposition ledger | `contexts review` |
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
@@ -77,6 +77,9 @@ python scripts/knowledge_router.py contexts links project:main --vault personal
 
 # 5. Assemble a cited "current state" card scaffold for one Context (read-only)
 python scripts/knowledge_router.py contexts compile project:main --vault personal
+
+# 5b. Write the reviewed card to a parallel area outside the Vault (no write policy needed)
+python scripts/knowledge_router.py contexts compile project:main --save --content-file card.md --vault personal
 
 # 6. Run a bounded review agenda; each run is recorded in an external ledger
 python scripts/knowledge_router.py contexts review --vault personal

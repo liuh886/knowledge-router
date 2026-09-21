@@ -45,14 +45,16 @@ from host-specific activation gates.
       consistently to discovery, briefs, drift checks and `contexts links`, plus graph-affinity
       brief ranking when a stored `link_graph.json` exists. Filters never rewrite a note.
 - [x] Compiled Context cards: `contexts compile` returns a read-only bundle (recorded state,
-      open follow-ups, topic anchors, bounded cited evidence, Markdown scaffold) and stages a
-      reviewed card as an external broker plan. Staging writes no Vault file; the target
-      directory must already exist and the commit still runs through `capture --commit`.
+      open follow-ups, topic anchors, bounded cited evidence, Markdown scaffold; query defaults
+      to the Context name and aliases) and writes the reviewed card with `--save` to an external
+      compiled area beside the Vault (`<vault>_compiled/`, `--out-root` override) with no write
+      policy involved. Writing inside the Vault remains available via `--stage` plus
+      `capture --commit` under `append-create`.
 - [x] Deposition loop: `contexts review` produces a bounded, prioritized agenda (maintenance-due
       Contexts, due follow-ups, aggregated maintained-scope doctor findings) and appends a durable
       external ledger entry; re-runs report new and resolved items. The Vault is read-only and
       unscoped findings remain available through `quality`.
-- [x] `tests/` suite: **183 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **188 tests**, ruff- and bytecode-clean.
 
 ## Open
 

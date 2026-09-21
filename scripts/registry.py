@@ -71,11 +71,10 @@ def _ensure_directory_chain(base: Path, target: Path) -> None:
         current = candidate
 
 
-def atomic_json_write(path: Path, payload: object) -> None:
-    """Write JSON through a same-directory temporary file and atomic replace."""
+def _atomic_replace(path: Path, data: bytes) -> None:
+    """Write bytes through a same-directory temporary file and atomic replace."""
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_name(f".{path.name}.{uuid.uuid4().hex}.tmp")
-    data = (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
     flags |= getattr(os, "O_NOFOLLOW", 0)
     descriptor: int | None = None
@@ -101,6 +100,18 @@ def atomic_json_write(path: Path, payload: object) -> None:
         if descriptor is not None:
             os.close(descriptor)
         temporary.unlink(missing_ok=True)
+
+
+def atomic_json_write(path: Path, payload: object) -> None:
+    """Write JSON through a same-directory temporary file and atomic replace."""
+    _atomic_replace(
+        path, (json.dumps(payload, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    )
+
+
+def atomic_text_write(path: Path, text: str) -> None:
+    """Write UTF-8 text through a same-directory temporary file and atomic replace."""
+    _atomic_replace(path, text.encode("utf-8"))
 
 
 class FileLock(AbstractContextManager["FileLock"]):

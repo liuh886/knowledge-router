@@ -10,9 +10,11 @@ existing capture commit under an explicit append-create policy.
 
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import PurePosixPath
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from capture_broker import create_capture_plan
@@ -20,7 +22,7 @@ from context_brief import brief_context
 from context_followups import list_followups
 from context_store import load_context_version
 from link_graph import load_link_graph, scope_anchors, select_context
-from registry import VaultConfig, VaultRegistry
+from registry import VaultConfig, VaultRegistry, atomic_text_write
 
 _COMPILE_DIR = "_compiled"
 _PLACEHOLDER = "（结合下方来源，用要点写 3–7 条；不要写来源中不存在的结论）"
@@ -173,6 +175,13 @@ def compile_context(
     graph = load_link_graph(registry, config)
     anchors = scope_anchors(graph, context["scopes"], limit=limit)
     suggested = target or suggest_target(context)
+    try:
+        area = compiled_root(config)
+        output_path = area / f"{_slug(context['name'])}.md"
+        compiled_area, suggested_output = str(area), str(output_path)
+        existing_output = output_path.is_file()
+    except (OSError, ValueError):
+        compiled_area, suggested_output, existing_output = "", "", False
     template = _template(
         context,
         recorded_state=brief["recorded_state"],
@@ -196,6 +205,9 @@ def compile_context(
         "anchors": anchors,
         "key_evidence": brief["evidence"],
         "graph_affinity_used": brief["graph_affinity_used"],
+        "compiled_area": compiled_area,
+        "suggested_output": suggested_output,
+        "existing_output": existing_output,
         "suggested_target": suggested,
         "suggested_target_directory_exists": target_path.parent.is_dir(),
         "existing_card": target_path.is_file(),
@@ -280,26 +292,116 @@ def stage_compiled_card(
     }
 
 
+def compiled_root(config: VaultConfig, out_root: str | None = None) -> Path:
+    """Resolve the external compiled area, which must stay outside the Vault.
+
+    Defaults to a sibling directory ``<vault>_compiled`` next to the Vault so the
+    cards are visible next to the knowledge base without writing into it.
+    """
+    if out_root:
+        root = Path(out_root).expanduser().absolute()
+    else:
+        parent = config.root_path.parent
+        root = parent / f"{config.root_path.name}_compiled"
+    root = root.resolve()
+    vault_root = config.root_path.resolve()
+    if root == vault_root or vault_root in root.parents:
+        raise ValueError("Compiled area must stay outside the Vault")
+    if any((ancestor / ".obsidian").is_dir() for ancestor in (root, *root.parents)):
+        raise ValueError("Compiled area must not be inside an Obsidian Vault")
+    if not root.parent.is_dir():
+        raise ValueError(f"Compiled area parent must already exist: {root.parent}")
+    return root
+
+
+def _render_card(context: dict[str, Any], content: str, title: str) -> str:
+    header = [
+        "---",
+        f"title: {json.dumps(title, ensure_ascii=False)}",
+        f"context_id: {json.dumps(context['id'], ensure_ascii=False)}",
+        'compiled: "true"',
+        "---",
+        "",
+        f"# {title}",
+        "",
+    ]
+    return "\n".join(header) + "\n" + _strip_leading_heading(content).strip() + "\n"
+
+
+def write_compiled_card(
+    registry: VaultRegistry,
+    config: VaultConfig,
+    selector: str,
+    content: str,
+    *,
+    name: str | None = None,
+    out_root: str | None = None,
+    overwrite: bool = False,
+    title: str | None = None,
+) -> dict[str, Any]:
+    """Write one compiled card into the external compiled area (never the Vault)."""
+    if not content.strip():
+        raise ValueError("Compiled card content cannot be empty")
+    version = load_context_version(registry, config)
+    if version is None:
+        raise ValueError("No registered Context definitions; run contexts register first")
+    context = select_context(version["definitions"]["contexts"], selector)
+    root = compiled_root(config, out_root)
+    filename = name or f"{_slug(context['name'])}.md"
+    if not filename.endswith(".md"):
+        filename = f"{filename}.md"
+    if filename != PurePosixPath(filename).name or filename.startswith("."):
+        raise ValueError("Compiled card name must be a single Markdown file name")
+    target = (root / filename).resolve()
+    if root not in target.parents:
+        raise ValueError("Compiled card name must stay inside the compiled area")
+    existed = target.exists()
+    if existed and not overwrite:
+        raise FileExistsError(
+            f"Compiled card already exists: {target} (use --overwrite to replace)"
+        )
+    card_title = title or context["name"]
+    body = _render_card(context, content, card_title)
+    atomic_text_write(target, body)
+    return {
+        "schema_version": 1,
+        "vault_id": config.id,
+        "status": "written",
+        "context": {"id": context["id"], "name": context["name"]},
+        "compiled_area": str(root),
+        "path": str(target),
+        "replaced": existed,
+        "card_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "vault_writes": 0,
+        "meaning": (
+            "Written outside the Vault; no Vault authorization is involved. Re-run compile "
+            "to refresh the scaffold after scoped sources change."
+        ),
+    }
+
+
 def format_compile_bundle(bundle: dict[str, Any]) -> str:
     """Render a human-readable compiled-card bundle with its scaffold."""
     context = bundle["context"]
-    target_note = (
-        ""
-        if bundle["suggested_target_directory_exists"]
-        else "（目录不存在，需先手动创建）"
-    )
     lines = [
         f"# 编译包：{context['name']} ({context['id']})",
         f"来源 {bundle['source_count']} 条 · 证据 {len(bundle['key_evidence'])} 条 · "
         f"锚点 {len(bundle['anchors'])} 个 · 待决 {len(bundle['open_followups'])} 项",
-        f"建议落档：{bundle['suggested_target']}{target_note}"
-        f" · 已有卡片：{'是' if bundle['existing_card'] else '否'}",
+    ]
+    if bundle.get("suggested_output"):
+        lines.append(
+            f"外部编译区：{bundle['compiled_area']}（不碰 Vault）"
+            f" · 目标：{bundle['suggested_output']}"
+            f" · 已存在：{'是' if bundle['existing_output'] else '否'}"
+        )
+    lines += [
         "",
         "## 模板（用来源填写，勿编造）",
         "",
         bundle["template"],
         "",
-        "填写后暂存：contexts compile <id> --stage --content-file <file> [--target <path>]",
-        "暂存只生成外部计划；写入仍需 capture --commit 与 append-create 策略。",
+        "填写后写入外部编译区：",
+        "contexts compile <id> --save --content-file <file> [--name <file.md>] [--overwrite]",
+        "如需写入 Vault 内（需 append-create 授权）：--stage --content-file <file> --target <相对路径>",
     ]
     return "\n".join(lines)

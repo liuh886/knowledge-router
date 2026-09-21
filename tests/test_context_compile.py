@@ -10,7 +10,12 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from capture_broker import commit_capture_plan
-from context_compile import compile_context, format_compile_bundle, stage_compiled_card
+from context_compile import (
+    compile_context,
+    format_compile_bundle,
+    stage_compiled_card,
+    write_compiled_card,
+)
 from context_store import register_contexts
 from fts_indexer import scan_notes
 from link_graph import build_link_graph, persist_link_graph
@@ -129,6 +134,82 @@ def test_stage_rejects_empty_content(vault):
     registry, config, _ = vault
     with pytest.raises(ValueError, match="empty"):
         stage_compiled_card(registry, config, "research:area", "   ")
+
+
+def test_write_compiled_card_goes_outside_the_vault(vault):
+    registry, config, root = vault
+    before = _snapshot(root)
+    result = write_compiled_card(registry, config, "research:area", CARD)
+    assert result["vault_writes"] == 0
+    target = Path(result["path"])
+    assert target.is_file()
+    assert config.root_path not in target.parents
+    assert target.parent.name.endswith("_compiled")
+    body = target.read_text(encoding="utf-8")
+    assert body.startswith("---\ntitle: \"Area\"")
+    assert body.count("\n# ") == 1 and body.startswith("---")
+    assert "\n# Area\n\n## 当前状态" in body
+    assert "## 当前状态" in body and "- 进展中" in body
+    assert _snapshot(root) == before
+
+
+def test_compiled_root_rejects_a_path_inside_the_vault(vault):
+    registry, config, root = vault
+    with pytest.raises(ValueError, match="outside the Vault"):
+        write_compiled_card(
+            registry, config, "research:area", CARD, out_root=str(root / "Area")
+        )
+
+
+def test_write_compiled_card_refuses_overwrite_without_flag(vault):
+    registry, config, _ = vault
+    write_compiled_card(registry, config, "research:area", CARD)
+    with pytest.raises(FileExistsError, match="already exists"):
+        write_compiled_card(registry, config, "research:area", CARD)
+    again = write_compiled_card(
+        registry, config, "research:area", CARD + "\n<!-- v2 -->", overwrite=True
+    )
+    assert again["replaced"] is True
+
+
+def test_write_compiled_card_rejects_unsafe_names(vault):
+    registry, config, _ = vault
+    with pytest.raises(ValueError, match="single Markdown file name"):
+        write_compiled_card(registry, config, "research:area", CARD, name="../escape.md")
+
+
+def test_cli_compile_save_writes_external(vault):
+    registry, config, root = vault
+    card = root.parent / "draft.md"
+    card.write_text(CARD, encoding="utf-8")
+    cli = Path(__file__).resolve().parent.parent / "scripts" / "knowledge_router.py"
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(cli),
+            "--state-root",
+            str(registry.state_root),
+            "contexts",
+            "compile",
+            "research:area",
+            "--save",
+            "--content-file",
+            str(card),
+            "--name",
+            "AreaCard.md",
+            "--vault",
+            config.id,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert run.returncode == 0, run.stderr
+    result = json.loads(run.stdout)
+    assert result["status"] == "written"
+    assert Path(result["path"]).is_file()
+    assert Path(result["path"]).name == "AreaCard.md"
 
 
 def test_cli_compile_bundle(vault):

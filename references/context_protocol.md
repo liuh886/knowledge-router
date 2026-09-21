@@ -104,6 +104,14 @@ reviewed card is frozen as an external broker plan (never a Vault write); the ta
 must already exist, and the copy is written only by `capture --commit --plan-id <id>` under an
 `append-create` policy. Suggested targets default to `<first-directory-scope>/_compiled/<name>.md`.
 
+The bundle query defaults to the Context name plus aliases (override with `--query`) so evidence
+is about the Context rather than every note in scope. `contexts compile ... --save --content-file
+PATH [--name FILE] [--overwrite]` writes the reviewed card into an external compiled area that
+defaults to `<vault>_compiled/` beside the Vault (`--out-root` override). That area must stay
+outside the Vault and outside any Obsidian Vault, and its parent must already exist; writing there
+involves no write policy at all. This is the recommended way to deposit compiled cards without
+authorizing Vault mutations.
+
 `contexts review [--context ID] [--limit N] [--no-record] --vault NAME [--json]` builds one
 bounded, prioritized agenda from maintenance-due Contexts, due follow-ups and the doctor's
 aggregated broken/ambiguous targets, keeping only findings reachable from a reviewed scope and

@@ -114,14 +114,18 @@ production state into an arbitrary location or another Vault.
   over links the Vault already states; `--rebuild` refreshes it from a live scan instead of
   reusing the stored generation. Attachment embeds are counted separately and never become
   note edges. No relationship is inferred from co-occurrence, and no Vault source is written.
-- Assemble a compiled Context card with `contexts compile NAME_OR_ID --vault <name> [--json]`.
-  It returns a read-only bundle: recorded state, open follow-ups, topic anchors, bounded cited
-  evidence and a Markdown scaffold whose prose must be written only from those sources. It
-  never synthesizes a judgement and writes nothing. Stage a reviewed card as an external broker
-  plan with `--stage --content-file <path> [--target <relative.md>]`; the target directory must
-  already exist (no directory is created), and the Vault is written only by
-  `capture --commit --plan-id <id>` under an explicit `append-create` policy. Suggested targets
-  default to `<first-directory-scope>/_compiled/<name>.md`.
+- Assemble a compiled Context card with `contexts compile NAME_OR_ID --vault <name> [--query T]
+  [--json]`. It returns a read-only bundle: recorded state, open follow-ups, topic anchors,
+  bounded cited evidence and a Markdown scaffold whose prose must be written only from those
+  sources. The query defaults to the Context name plus aliases, so evidence is about the Context.
+  It never synthesizes a judgement and writes nothing.
+- Write the reviewed card with `--save --content-file <path> [--name <file.md>] [--overwrite]`.
+  This writes into an external compiled area (default `<vault>_compiled/` beside the Vault;
+  override with `--out-root`) and never touches the Vault, so no write policy is involved. A
+  target inside the Vault or inside an Obsidian Vault is refused.
+- To write inside the Vault instead, use `--stage --content-file <path> --target <relative.md>`;
+  the directory must already exist (no directory is created) and the copy is written only by
+  `capture --commit --plan-id <id>` under an explicit `append-create` policy.
 - Assemble a bounded review agenda with `contexts review [--context ID] [--limit N]
   [--no-record] --vault <name> [--json]`. It merges maintenance-due Contexts, due follow-ups,
   and aggregated in-scope doctor findings (broken/ambiguous targets grouped by occurrence,

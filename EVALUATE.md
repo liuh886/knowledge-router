@@ -36,7 +36,7 @@ python -m ruff check scripts tests integrations
 
 ## 4. Recorded results
 
-- **Full local suite: 183 tests passed**, ruff and bytecode compilation clean. The single warning is
+- **Full local suite: 188 tests passed**, ruff and bytecode compilation clean. The single warning is
   an intentional duplicate ZIP entry used by the backup tamper-refusal fixture.
 - **Read-only relationship graph**: `contexts links` reuses the stored graph in ~0.4 s versus a
   ~10 s cold rebuild on a 2,100+ note Vault. It reports topic anchors, related Contexts (overlap
@@ -55,6 +55,10 @@ python -m ruff check scripts tests integrations
   adds exactly the compiled card while leaving every other source byte-identical. A live
   read-only bundle on a 334-source Context completed in ~21 s and returned recorded state, open
   follow-ups, eight anchors and eight cited passages.
+- **External compiled area**: `contexts compile --save` writes the reviewed card outside the Vault
+  (default `<vault>_compiled/`) with no write policy, refusing any target inside the Vault or an
+  Obsidian Vault. Tests prove the card lands outside the Vault, the Vault stays byte-identical,
+  overwrite requires an explicit flag and unsafe names are rejected.
 - **Deposition loop**: `contexts review` aggregates maintenance-due, due follow-ups and
   maintained-scope doctor findings into a bounded, occurrence-ranked agenda and records each run
   in an external ledger with a stable fingerprint. Tests cover overdue maintenance, scoped-only

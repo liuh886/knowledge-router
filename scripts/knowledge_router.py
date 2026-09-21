@@ -20,6 +20,7 @@ from context_compile import (
     compile_context,
     format_compile_bundle,
     stage_compiled_card,
+    write_compiled_card,
 )
 from context_delivery import deliver_followups
 from context_events import commit_event, context_history, inspect_event, preview_event
@@ -336,8 +337,12 @@ def _parser() -> argparse.ArgumentParser:
     )
     compile_parser.add_argument("selector")
     compile_parser.add_argument("--stage", action="store_true")
+    compile_parser.add_argument("--save", action="store_true")
     compile_parser.add_argument("--content-file", type=Path)
     compile_parser.add_argument("--target")
+    compile_parser.add_argument("--out-root")
+    compile_parser.add_argument("--name")
+    compile_parser.add_argument("--overwrite", action="store_true")
     compile_parser.add_argument("--title")
     compile_parser.add_argument("--idempotency-key")
     compile_parser.add_argument("--limit", type=int, default=8)
@@ -719,6 +724,32 @@ def main() -> int:
                 )
                 return 0
             elif args.context_command == "compile":
+                if args.save:
+                    if not args.content_file:
+                        raise ValueError("--save requires --content-file")
+                    path = args.content_file.expanduser().absolute()
+                    content = secure_read_bytes(path.parent, path.name).decode(
+                        "utf-8-sig"
+                    )
+                    written = write_compiled_card(
+                        registry,
+                        config,
+                        args.selector,
+                        content,
+                        name=args.name,
+                        out_root=args.out_root,
+                        overwrite=args.overwrite,
+                        title=args.title,
+                    )
+                    _emit(
+                        written,
+                        json_output=args.json,
+                        message=(
+                            f"已写入外部编译区（未碰 Vault）：{written['path']}\n"
+                            f"编译区：{written['compiled_area']}"
+                        ),
+                    )
+                    return 0
                 if args.stage:
                     if not args.content_file:
                         raise ValueError("--stage requires --content-file")
