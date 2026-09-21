@@ -61,16 +61,20 @@ from host-specific activation gates.
       agenda over an incomplete basis (no registered Context, unreadable source, truncated poll)
       returns `incomplete`, never `clear`.
 - [x] Single link resolver: `link_resolver.py` owns `[[wikilink]]` resolution for both
-      `vault_doctor` and `link_graph` (relative path, vault path, unique basename, unique alias),
-      so diagnostics and the relationship graph cannot disagree. Verdicts record the deciding
-      level; genuine ambiguity stays ambiguous and only carries a proximity candidate. The
-      precedence is documented as an unverified hypothesis, not a claimed Obsidian equivalence.
+      `vault_doctor` and `link_graph`, so diagnostics and the relationship graph cannot disagree.
+      The model follows Obsidian's official help: a target carrying a path is resolved as a path
+      (relative to the note, then from the vault root); a bare target by unique filename, then
+      unique alias; non-Markdown targets must carry their extension. An earlier
+      "relative path first for everything" ladder was corrected because it let a bare-name match
+      override an explicit path. Verdicts record the deciding level, ambiguity stays ambiguity, and
+      two undocumented cases (`ambiguous_proximity_unique`,
+      `unresolved_with_unique_basename_fallback`) are reported rather than silently decided.
 - [x] Conservative link triage: each broken occurrence carries `triage_hint` + `triage_reason`
       with `confidence: hint` and the original totals are retained (`broken_link_occurrences`,
       `broken_by_hint`). A hint is never a verdict; no reference is dismissed because of its
       source, and no target is called actionable from its name alone.
 - [x] `_stale_card_items` checks the external compiled area as well as any in-Vault card.
-- [x] `tests/` suite: **204 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **207 tests**, ruff- and bytecode-clean.
 
 ## Open
 

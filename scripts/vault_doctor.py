@@ -194,14 +194,20 @@ def diagnose_vault(
                 resolved_count += 1
             elif decision.status == STATUS_UNRESOLVED:
                 hint, reason, confidence = triage_hint(link.source, link.target)
-                broken.append(
-                    {
-                        **link.to_dict(),
-                        "triage_hint": hint,
-                        "triage_reason": reason,
-                        "triage_confidence": confidence,
-                    }
-                )
+                if decision.basename_fallback:
+                    reason = (
+                        f"{reason}; a uniquely named file exists elsewhere, but the "
+                        "documented behaviour for this fallback is unspecified"
+                    )
+                entry = {
+                    **link.to_dict(),
+                    "triage_hint": hint,
+                    "triage_reason": reason,
+                    "triage_confidence": confidence,
+                }
+                if decision.basename_fallback:
+                    entry["basename_fallback"] = decision.basename_fallback
+                broken.append(entry)
             elif decision.status == STATUS_AMBIGUOUS:
                 ambiguous.append(decision.to_dict())
 
@@ -220,6 +226,7 @@ def diagnose_vault(
     # Informational only: how many ambiguities a proximity rule would collapse.
     # This never changes the reported ambiguity, because that rule is unverified.
     ambiguous_proximity = sum(1 for item in ambiguous if item.get("nearest_unique"))
+    unresolved_with_fallback = sum(1 for item in broken if item.get("basename_fallback"))
     manifest = "\n".join(
         f"{item.path}:{item.checksum}" for item in scan.records
     ).encode()
@@ -239,13 +246,17 @@ def diagnose_vault(
         "ambiguous_targets": ambiguous_targets,
         "ambiguous_link_occurrences": len(ambiguous),
         "ambiguous_proximity_unique": ambiguous_proximity,
+        "unresolved_with_unique_basename_fallback": unresolved_with_fallback,
         "orphans": sorted(orphans),
         "skipped_decode": list(scan.skipped_decode),
         "skipped_io": list(scan.skipped_io),
         "scan_complete": not (scan.skipped_decode or scan.skipped_io),
         "triage_note": (
             "Triage hints are heuristics, not verdicts: no hint means a reference is safe "
-            "to ignore, and no target is called 'actionable' from its name alone."
+            "to ignore, and no target is called 'actionable' from its name alone. "
+            "unresolved_with_unique_basename_fallback counts unresolved path targets whose "
+            "basename is unique elsewhere; Obsidian's documented behaviour does not cover "
+            "that fallback, so they stay unresolved and are reported instead."
         ),
     }
 
@@ -307,6 +318,9 @@ def summarize_diagnostics(
         "counts": counts,
         "broken_by_hint": dict(report.get("broken_by_hint", {})),
         "ambiguous_proximity_unique": int(report.get("ambiguous_proximity_unique", 0)),
+        "unresolved_with_unique_basename_fallback": int(
+            report.get("unresolved_with_unique_basename_fallback", 0)
+        ),
         "top_broken_targets": [
             bounded_target(item) for item in broken_targets[:detail_limit]
         ],

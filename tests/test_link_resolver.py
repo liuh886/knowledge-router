@@ -36,37 +36,71 @@ def _decide(resolver: LinkResolver, source: str, target: str):
     return resolver.resolve(LinkReference(source=source, line=1, target=target))
 
 
-def test_relative_path_beats_a_vault_unique_basename():
-    resolver = _resolver(
-        {
-            "Area/Note.md": "",
-            "Other/Note.md": "",
-            "Area/Source.md": "",
-        }
-    )
-    decision = _decide(resolver, "Area/Source.md", "Note")
+def test_bare_name_resolves_by_unique_filename():
+    """Documented default: only the filename is used when it is unique."""
+    resolver = _resolver({"Elsewhere/Only.md": "", "Area/Source.md": ""})
+    decision = _decide(resolver, "Area/Source.md", "Only")
     assert decision.status == STATUS_RESOLVED
-    assert decision.level == LEVEL_RELATIVE
-    assert decision.destination == "Area/Note.md"
+    assert decision.level == LEVEL_BASENAME
+    assert decision.destination == "Elsewhere/Only.md"
 
 
-def test_vault_path_is_used_when_no_relative_match():
-    resolver = _resolver({"Area/Deep/Note.md": "", "Area/Source.md": ""})
+def test_explicit_path_cannot_be_overridden_by_a_unique_bare_name():
+    """A path-qualified link must resolve by path, not by an unrelated bare match."""
+    resolver = _resolver({"Area/Deep/Note.md": "", "Elsewhere/Note.md": "", "Area/Source.md": ""})
     decision = _decide(resolver, "Area/Source.md", "Area/Deep/Note")
     assert decision.status == STATUS_RESOLVED
     assert decision.level == LEVEL_VAULT_PATH
     assert decision.destination == "Area/Deep/Note.md"
 
 
-def test_unique_basename_resolves_from_an_unrelated_folder():
-    resolver = _resolver({"Elsewhere/Only.md": "", "Area/Source.md": ""})
-    decision = _decide(resolver, "Area/Source.md", "Only")
+def test_unresolved_path_reports_a_unique_basename_fallback_without_using_it():
+    """The path fails and a uniquely named file exists elsewhere: undocumented, so
+    the link stays unresolved and the possibility is reported instead."""
+    resolver = _resolver({"Elsewhere/README.md": "", "Area/Source.md": ""})
+    decision = _decide(resolver, "Area/Source.md", "Missing/Folder/README")
+    assert decision.status == STATUS_UNRESOLVED
+    assert decision.destination is None
+    assert decision.basename_fallback == "Elsewhere/README.md"
+
+
+def test_unresolved_path_with_a_duplicated_basename_reports_no_fallback():
+    resolver = _resolver(
+        {"Elsewhere/README.md": "", "Other/README.md": "", "Area/Source.md": ""}
+    )
+    decision = _decide(resolver, "Area/Source.md", "Missing/Folder/README")
+    assert decision.status == STATUS_UNRESOLVED
+    assert decision.basename_fallback is None
+
+
+def test_doctor_counts_the_undocumented_fallback_case(tmp_path):
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Elsewhere").mkdir()
+    (root / "Elsewhere" / "README.md").write_text("# R\n", encoding="utf-8")
+    (root / "Area" / "Source.md").write_text(
+        "# S\n[[Missing/Folder/README]]", encoding="utf-8"
+    )
+    report = diagnose_vault(root)
+    assert report["unresolved_with_unique_basename_fallback"] == 1
+    assert report["broken_link_occurrences"] == 1
+    assert report["broken_links"][0]["basename_fallback"] == "Elsewhere/README.md"
+    assert "unspecified" in report["broken_links"][0]["triage_reason"]
+    # Still unresolved: the unknown rule is never decided silently.
+    assert report["links_resolved"] == 0
+
+
+def test_relative_path_form_resolves_next_to_the_note():
+    """Documented "relative path from current note" form."""
+    resolver = _resolver({"Area/Sub/Note.md": "", "Area/Source.md": ""})
+    decision = _decide(resolver, "Area/Source.md", "Sub/Note")
     assert decision.status == STATUS_RESOLVED
-    assert decision.level == LEVEL_BASENAME
+    assert decision.level == LEVEL_RELATIVE
+    assert decision.destination == "Area/Sub/Note.md"
 
 
-def test_first_level_with_matches_decides_even_when_a_later_level_is_unique():
-    """Two basename matches stay ambiguous; a unique alias must not silently win."""
+def test_shared_filename_stays_ambiguous_because_resolution_is_undocumented():
+    """Obsidian documents link *creation*; a pre-existing bare duplicate stays ambiguous."""
     resolver = _resolver(
         {
             "Deep/A/Note.md": "---\naliases:\n  - Note\n---\n",

@@ -109,13 +109,24 @@ is complete, and `incomplete` otherwise, naming `no_registered_contexts`, `scan_
 additionally requires a complete basis on both sides, so a pre-fix entry yields `comparable: false`,
 a named `incomparable_reason`, and `resolved_suppressed` instead of an invented resolution.
 
-**One resolver instead of two.** `vault_doctor` and `link_graph` each carried their own copy of the
-union-candidates-then-count logic, which could disagree about the same link. `link_resolver.py` now
-owns resolution with explicit precedence: path relative to the note, vault-relative path, unique
-basename, unique alias. Each verdict records the deciding level. Genuinely ambiguous targets stay
-ambiguous and only carry a proximity candidate for information. The order is documented as a
-hypothesis about Obsidian rather than a verified equivalence, and needs sample-by-sample
-confirmation. `tests/test_link_resolver.py` asserts that the two consumers cannot diverge.
+**One resolver instead of two, and a corrected model.** `vault_doctor` and `link_graph` each carried
+their own copy of the union-candidates-then-count logic, which could disagree about the same link.
+`link_resolver.py` now owns resolution. The first version of it used a "relative path → vault path →
+unique basename → unique alias" ladder, which was then **wrong and corrected** after checking
+Obsidian's official help: an explicit path must not be overridden by a bare-name match elsewhere,
+and the documented default is "only the filename if it is unique in the vault". The implemented rule
+is therefore:
+
+- a target containing a path separator resolves **as a path** — first relative to the linking note,
+  then from the vault root;
+- a bare target resolves by **unique filename**, then by unique alias;
+- non-Markdown targets must carry their extension.
+
+Two cases are deliberately *not* decided, because the documentation does not cover them:
+`ambiguous_proximity_unique` counts ambiguous targets a proximity preference would collapse, and
+`unresolved_with_unique_basename_fallback` counts unresolved path targets whose basename is unique
+elsewhere. Both are reported as information; the verdicts stay ambiguous and unresolved.
+`tests/test_link_resolver.py` asserts that the two consumers cannot diverge.
 
 **Conservative triage.** Every broken occurrence now carries `triage_hint`, `triage_reason` and
 `confidence: hint`, with the original totals retained as `broken_link_occurrences` and
@@ -125,19 +136,22 @@ rather than promoted to actionable.
 
 Read-only acceptance on a ~2,150-note Obsidian Vault:
 
-- 7,158 wikilink occurrences = 914 resolved + 6,177 broken + 67 ambiguous (no occurrence dropped)
-- broken targets whose short name exists elsewhere in the Vault: **0** (no missed resolutions)
+- 7,158 wikilink occurrences = 897 resolved + 6,251 broken + 10 ambiguous (no occurrence dropped)
+- broken links that a real file could have served: **0** (no missed resolutions)
 - resolved destinations that are not real Vault paths: **0**
 - ambiguous verdicts carrying fewer than two candidates: **0**
 - doctor and link graph agree exactly on broken and ambiguous counts
-- triage re-attributes 5,537 of 6,177 unresolved occurrences (~90%) to a single auto-generated
-  Zotero note directory, leaving 488 `needs_review`, 100 asset references and 52 template
+- triage re-attributes 5,537 of 6,251 unresolved occurrences (~89%) to a single auto-generated
+  Zotero note directory, leaving 562 `needs_review`, 100 asset references and 52 template
   placeholders; the full total is still reported
-- resolution mix: 219 relative-path, 106 vault-path, 586 basename, 3 alias
+- 13 unresolved path targets are flagged as undocumented-basename-fallback cases and 4 ambiguities
+  as proximity-collapsible; neither is resolved
+- resolution mix: 798 unique filename, 106 vault path, 3 alias, 0 note-relative
 - the agenda surfaces the composition via `counts_by_hint`, detects a stale externally deposited
   compiled card, and two consecutive runs report no new and no resolved items, with the earlier
   pre-fix entry correctly refusing comparison instead of claiming resolutions
 
-Suite: **204 tests**, ruff clean. The precedence order still needs confirmation against Obsidian's
-documented behaviour on real samples, and the triage ranking is a convenience, not a completeness
-proof.
+Suite: **207 tests**, ruff clean. The ambiguous and basename-fallback cases remain undecided by
+design, so any count that depends on them is a report rather than a verdict, and the triage ranking
+is a convenience rather than a completeness proof.
+

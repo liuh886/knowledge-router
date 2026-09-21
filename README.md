@@ -53,17 +53,19 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 32 modules are pure Python standard library. The full suite is **204 tests**. See
+All 32 modules are pure Python standard library. The full suite is **207 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
 
 Two properties are worth knowing before reading any diagnostic number:
 
-- **One resolver.** `link_resolver.py` resolves `[[wikilinks]]` for both the doctor and the
-  relationship graph (relative path → vault path → unique basename → unique alias), so the two can
-  never report different broken/ambiguous counts. Every verdict records the level that decided it;
-  genuine ambiguity stays ambiguous. The precedence order is a documented hypothesis about
-  Obsidian, not a claimed equivalence.
+- **One resolver, documented rules.** `link_resolver.py` resolves `[[wikilinks]]` for both the
+  doctor and the relationship graph, so the two can never report different broken/ambiguous counts.
+  A target that carries a path is resolved as a path (relative to the note, then from the vault
+  root); a bare target by unique filename, then unique alias. Non-Markdown targets must carry their
+  extension. Verdicts record the deciding level, ambiguity stays ambiguity, and two undocumented
+  cases — a proximity-collapsible ambiguity and an unresolved path whose basename is unique
+  elsewhere — are counted and reported rather than silently decided.
 - **Hints are not verdicts.** Broken-link triage hints (`zotero_generated`, `template_placeholder`,
   `missing_asset_reference`, `needs_review`) always carry `confidence: hint`, the original totals
   are retained, and no reference is dismissed because of where it lives.
@@ -169,7 +171,7 @@ knowledge-router/
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 204 tests
+└── tests/                   # 207 tests
 ```
 
 ## Deferred (explicitly)

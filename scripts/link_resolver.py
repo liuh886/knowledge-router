@@ -5,13 +5,25 @@ Both the doctor and the link graph must agree on what a ``[[wikilink]]`` resolve
 Running two independent copies of that logic produced different verdicts for the same
 Vault, so resolution lives here once.
 
-Precedence is a *hypothesis* about Obsidian behaviour, not a verified equivalence.
-Obsidian distinguishes at least relative links, vault-absolute paths and "shortest
-path when the name is unique", and its exact tie-breaking is not reproduced here.
-Each decision therefore records the level that produced it, and unresolved/ambiguous
-outcomes are reported rather than guessed. ``nearest_candidate`` records which
-candidate a proximity rule would prefer, but it never turns an ambiguity into a
-resolution on this layer's own authority.
+The model follows Obsidian's documented behaviour rather than an invented ladder.
+Obsidian's help states that it "resolves links by finding the best match among files
+in your vault", that with the default link format it "uses only the filename if it is
+unique in the vault", that it "adds enough path components to disambiguate" when two
+notes share a name, and that the supported link forms are a path relative to the
+current note or an absolute path from the vault root. Non-Markdown targets must carry
+their file extension (``[[Figure 1.png]]``).
+
+That yields one rule with two branches:
+
+* a target containing a path separator is resolved **as a path** - relative to the
+  linking note first, then from the vault root - because an explicit path must win
+  over any bare-name match;
+* a bare target is resolved by **unique filename**, then by unique alias.
+
+Ambiguity is never silently collapsed. Obsidian's documentation does not specify how
+an already-existing bare link is resolved when the filename is not unique, so such a
+target stays ``ambiguous`` and only carries a proximity candidate as an explicitly
+unverified hint.
 """
 
 from __future__ import annotations
@@ -24,16 +36,23 @@ from typing import Any, Iterable, Mapping
 
 _WIKILINK = re.compile(r"\[\[([^\]\n]+)\]\]")
 
-LEVEL_RELATIVE = "relative_to_note"
-LEVEL_VAULT_PATH = "vault_relative_path"
+# A target with no separator: the documented "filename if unique" branch.
 LEVEL_BASENAME = "unique_basename"
 LEVEL_ALIAS = "unique_alias"
+# A target that already carries path components: the documented path forms.
+LEVEL_RELATIVE = "relative_to_note"
+LEVEL_VAULT_PATH = "vault_relative_path"
 
 STATUS_RESOLVED = "resolved"
 STATUS_UNRESOLVED = "unresolved"
 STATUS_AMBIGUOUS = "ambiguous"
 
-_LEVEL_ORDER = (LEVEL_RELATIVE, LEVEL_VAULT_PATH, LEVEL_BASENAME, LEVEL_ALIAS)
+LEVEL_PRECEDENCE: tuple[str, ...] = (
+    LEVEL_RELATIVE,
+    LEVEL_VAULT_PATH,
+    LEVEL_BASENAME,
+    LEVEL_ALIAS,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -61,6 +80,7 @@ class LinkDecision:
     candidates: tuple[str, ...] = ()
     nearest_candidate: str | None = None
     nearest_unique: bool = False
+    basename_fallback: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         payload: dict[str, Any] = {
@@ -77,6 +97,8 @@ class LinkDecision:
         if self.nearest_candidate:
             payload["nearest_candidate"] = self.nearest_candidate
             payload["nearest_unique"] = self.nearest_unique
+        if self.basename_fallback:
+            payload["basename_fallback"] = self.basename_fallback
         return payload
 
 
@@ -238,26 +260,32 @@ class LinkResolver:
         return best, True
 
     def resolve(self, reference: LinkReference) -> LinkDecision:
-        """Resolve one occurrence using the documented precedence levels."""
+        """Resolve one occurrence using Obsidian's documented rules."""
         source = reference.source
         target = reference.target
         folded = target.casefold()
         parent = PurePosixPath(source).parent
+        has_path = "/" in target
 
-        levels: list[tuple[str, set[str]]] = [
-            (
-                LEVEL_RELATIVE,
-                {self.matching[PurePosixPath(parent, target).as_posix().casefold()]}
-                if PurePosixPath(parent, target).as_posix().casefold() in self.matching
-                else set(),
-            ),
-            (
-                LEVEL_VAULT_PATH,
-                {self.matching[folded]} if folded in self.matching else set(),
-            ),
-            (LEVEL_BASENAME, set(self.by_short.get(_short_key(target), set()))),
-            (LEVEL_ALIAS, set(self.by_alias.get(folded, set()))),
-        ]
+        if has_path:
+            # An explicit path must not be overridden by an unrelated bare-name match.
+            levels: list[tuple[str, set[str]]] = [
+                (
+                    LEVEL_RELATIVE,
+                    {self.matching[PurePosixPath(parent, target).as_posix().casefold()]}
+                    if PurePosixPath(parent, target).as_posix().casefold() in self.matching
+                    else set(),
+                ),
+                (
+                    LEVEL_VAULT_PATH,
+                    {self.matching[folded]} if folded in self.matching else set(),
+                ),
+            ]
+        else:
+            levels = [
+                (LEVEL_BASENAME, set(self.by_short.get(_short_key(target), set()))),
+                (LEVEL_ALIAS, set(self.by_alias.get(folded, set()))),
+            ]
 
         for level, candidates in levels:
             if not candidates:
@@ -291,7 +319,18 @@ class LinkResolver:
             status=STATUS_UNRESOLVED,
             level="none",
             destination=None,
+            basename_fallback=self._basename_fallback(target) if has_path else None,
         )
+
+    def _basename_fallback(self, target: str) -> str | None:
+        """A unique same-named file elsewhere, when a path target does not exist.
+
+        Obsidian's help does not say whether a path-qualified link falls back to a
+        unique filename after the path fails. Reported as information only; the link
+        stays unresolved so the unknown rule is never silently decided here.
+        """
+        candidates = self.by_short.get(_short_key(target), set())
+        return next(iter(candidates)) if len(candidates) == 1 else None
 
     def decide_all(self, outgoing: Iterable[LinkReference]) -> list[LinkDecision]:
         return [self.resolve(reference) for reference in outgoing]
@@ -305,6 +344,3 @@ def _distance(source_parts: tuple[str, ...], candidate_parts: tuple[str, ...]) -
             break
         common += 1
     return (len(source_parts) - common) + (len(candidate_parts) - common)
-
-
-LEVEL_PRECEDENCE: tuple[str, ...] = _LEVEL_ORDER
