@@ -44,7 +44,11 @@ from host-specific activation gates.
 - [x] Context `include`/`exclude`/`tags` filters, validated at registration and applied
       consistently to discovery, briefs, drift checks and `contexts links`, plus graph-affinity
       brief ranking when a stored `link_graph.json` exists. Filters never rewrite a note.
-- [x] `tests/` suite: **169 tests**, ruff- and bytecode-clean.
+- [x] Compiled Context cards: `contexts compile` returns a read-only bundle (recorded state,
+      open follow-ups, topic anchors, bounded cited evidence, Markdown scaffold) and stages a
+      reviewed card as an external broker plan. Staging writes no Vault file; the target
+      directory must already exist and the commit still runs through `capture --commit`.
+- [x] `tests/` suite: **176 tests**, ruff- and bytecode-clean.
 
 ## Open
 

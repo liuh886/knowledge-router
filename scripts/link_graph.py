@@ -149,7 +149,7 @@ def load_link_graph(
     return data
 
 
-def _select_context(
+def select_context(
     contexts: list[dict[str, Any]], selector: str
 ) -> dict[str, Any]:
     exact = [row for row in contexts if row["id"] == selector]
@@ -178,6 +178,44 @@ def _in_scope(path: str, scopes: list[str]) -> bool:
         scope == "." or path == scope or path.startswith(scope.rstrip("/") + "/")
         for scope in scopes
     )
+
+
+def scope_anchors(
+    graph: dict[str, Any] | None,
+    scopes: list[str],
+    *,
+    members: set[str] | None = None,
+    limit: int = 12,
+) -> list[dict[str, Any]]:
+    """Return MOC anchors that sit in the scopes or link into them."""
+    if not graph:
+        return []
+    mocs = set(graph.get("mocs", ()))
+    outgoing: dict[str, list[str]] = defaultdict(list)
+    for source, target in graph.get("edges", ()):
+        if source in mocs:
+            outgoing[source].append(target)
+    rows: list[dict[str, Any]] = []
+    for path, targets in outgoing.items():
+        if members is not None:
+            inside = sum(1 for target in targets if target in members)
+            relevant = path in members or inside > 0
+        else:
+            inside = sum(1 for target in targets if _in_scope(target, scopes))
+            relevant = _in_scope(path, scopes) or inside > 0
+        if relevant:
+            rows.append(
+                {
+                    "path": path,
+                    "out_links": len(targets),
+                    "in_scope_targets": inside,
+                    "external_targets": len(targets) - inside,
+                }
+            )
+    rows.sort(
+        key=lambda row: (-row["in_scope_targets"], -row["out_links"], row["path"])
+    )
+    return rows[:limit]
 
 
 def anchor_linked_paths(graph: dict[str, Any] | None, scopes: list[str]) -> set[str]:
@@ -231,7 +269,7 @@ def context_links(
     if version is None:
         return _empty_result(config)
     contexts = version["definitions"]["contexts"]
-    selected = _select_context(contexts, selector)
+    selected = select_context(contexts, selector)
     graph = None if rebuild else load_link_graph(registry, config)
     if graph is None:
         graph = build_link_graph(
@@ -285,22 +323,7 @@ def context_links(
             )
     related.sort(key=lambda row: (-row["cross_links"], row["context_id"]))
 
-    anchors: list[dict[str, Any]] = []
-    for path in graph["mocs"]:
-        targets = outgoing.get(path, [])
-        in_scope = sum(1 for target in targets if target in own)
-        if path in own or in_scope:
-            anchors.append(
-                {
-                    "path": path,
-                    "out_links": len(targets),
-                    "in_scope_targets": in_scope,
-                    "external_targets": len(targets) - in_scope,
-                }
-            )
-    anchors.sort(
-        key=lambda row: (-row["in_scope_targets"], -row["out_links"], row["path"])
-    )
+    anchors = scope_anchors(graph, selected["scopes"], members=own, limit=limit)
 
     hub_notes = sorted(
         (

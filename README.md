@@ -48,10 +48,11 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Read-only Git project catalog + federated retrieval | `projects *`, `search --projects`, `brief --projects` |
 | Explainable quality signals + Context-aware queue | `quality` |
 | Read-only Context relationship graph | `contexts links` |
+| Compiled Context card (bundle + staged draft) | `contexts compile` |
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 29 modules are pure Python standard library. The full suite is **161 tests**. See
+All 30 modules are pure Python standard library. The full suite is **176 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
 
@@ -73,7 +74,10 @@ python scripts/knowledge_router.py contexts register --definitions examples/cont
 # 4. Inspect a Context's existing wikilink neighbourhood (anchors, related Contexts, hubs)
 python scripts/knowledge_router.py contexts links project:main --vault personal
 
-# 5. Preview a capture, then commit only the reviewed payload
+# 5. Assemble a cited "current state" card scaffold for one Context (read-only)
+python scripts/knowledge_router.py contexts compile project:main --vault personal
+
+# 6. Preview a capture, then commit only the reviewed payload
 python scripts/knowledge_router.py capture "Decided to defer the offline compression work" --vault personal
 python scripts/knowledge_router.py capture --vault personal --commit --plan-id <id>
 ```
@@ -135,12 +139,12 @@ knowledge-router/
 ├── SKILL.md                 # agent-facing command contract
 ├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
 ├── pyproject.toml           # pytest + ruff configuration
-├── scripts/                 # 29 stdlib-only modules
+├── scripts/                 # 30 stdlib-only modules
 ├── examples/contexts.json   # Context definition template
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 161 tests
+└── tests/                   # 176 tests
 ```
 
 ## Deferred (explicitly)

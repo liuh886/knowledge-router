@@ -36,7 +36,7 @@ python -m ruff check scripts tests integrations
 
 ## 4. Recorded results
 
-- **Full local suite: 169 tests passed**, ruff and bytecode compilation clean. The single warning is
+- **Full local suite: 176 tests passed**, ruff and bytecode compilation clean. The single warning is
   an intentional duplicate ZIP entry used by the backup tamper-refusal fixture.
 - **Read-only relationship graph**: `contexts links` reuses the stored graph in ~0.4 s versus a
   ~10 s cold rebuild on a 2,100+ note Vault. It reports topic anchors, related Contexts (overlap
@@ -49,6 +49,12 @@ python -m ruff check scripts tests integrations
   passages toward MOC-anchor linked notes when a stored graph exists. Applied to a live Vault,
   excluding four off-topic notes dropped a broad Context from 338 to 334 sources and removed a
   same-folder noise passage from the top of the brief, with 57 affinity-linked sources reported.
+- **Compiled Context cards**: `contexts compile` assembles a cited scaffold without writing
+  anything, and `--stage` freezes an external broker plan without touching the Vault. Tests
+  prove staging creates a plan only, the target directory must pre-exist, and a follow-up commit
+  adds exactly the compiled card while leaving every other source byte-identical. A live
+  read-only bundle on a 334-source Context completed in ~21 s and returned recorded state, open
+  follow-ups, eight anchors and eight cited passages.
 - **Real-Vault benchmark** (local, historical): 22 retrieval cases over a 1,500+ note Vault,
   1,012 latency samples, Recall@5 = MRR = abstention precision = citation coverage = 1.0,
   warm p50 ≈ 4.87 ms, p95 ≈ 32.33 ms. Reproduce with your own fixture:

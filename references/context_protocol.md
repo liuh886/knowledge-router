@@ -95,6 +95,14 @@ to contain one of the values, with nested tags matching their parent (`Contact/P
 briefs, drift bindings and `contexts links`, and never rewrite a note. Briefs also re-rank
 in-scope passages toward notes linked from MOC anchors when a stored `link_graph.json` exists;
 the result reports `graph_affinity_used`, and ranking is unchanged when no graph is stored.
+
+`contexts compile NAME_OR_ID --vault NAME [--limit N] [--json]` folds one Context into a
+compiled-card scaffold: recorded state, open follow-ups, topic anchors, bounded cited evidence
+and a Markdown template. It is read-only (`writes_performed=0`) and produces no synthesized
+judgement or current-state claim. With `--stage --content-file PATH [--target REL.md]` the
+reviewed card is frozen as an external broker plan (never a Vault write); the target directory
+must already exist, and the copy is written only by `capture --commit --plan-id <id>` under an
+`append-create` policy. Suggested targets default to `<first-directory-scope>/_compiled/<name>.md`.
 Follow-up dates are deliberately unresolved in M1 and no reminder is scheduled.
 
 Both commands accept `--definitions PATH` for an explicit JSON declaration:

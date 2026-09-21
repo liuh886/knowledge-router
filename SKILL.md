@@ -114,6 +114,14 @@ production state into an arbitrary location or another Vault.
   over links the Vault already states; `--rebuild` refreshes it from a live scan instead of
   reusing the stored generation. Attachment embeds are counted separately and never become
   note edges. No relationship is inferred from co-occurrence, and no Vault source is written.
+- Assemble a compiled Context card with `contexts compile NAME_OR_ID --vault <name> [--json]`.
+  It returns a read-only bundle: recorded state, open follow-ups, topic anchors, bounded cited
+  evidence and a Markdown scaffold whose prose must be written only from those sources. It
+  never synthesizes a judgement and writes nothing. Stage a reviewed card as an external broker
+  plan with `--stage --content-file <path> [--target <relative.md>]`; the target directory must
+  already exist (no directory is created), and the Vault is written only by
+  `capture --commit --plan-id <id>` under an explicit `append-create` policy. Suggested targets
+  default to `<first-directory-scope>/_compiled/<name>.md`.
 
 - Search before answering Vault-specific questions:
   `python scripts/knowledge_router.py search "<query>" --vault <name> --json`

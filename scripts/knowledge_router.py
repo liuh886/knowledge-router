@@ -16,6 +16,11 @@ from typing import Any
 from capture_broker import commit_capture_plan, create_capture_plan, load_capture_plan
 from context_assembler import assemble_decision_context
 from context_brief import brief_context, format_context_brief
+from context_compile import (
+    compile_context,
+    format_compile_bundle,
+    stage_compiled_card,
+)
 from context_delivery import deliver_followups
 from context_events import commit_event, context_history, inspect_event, preview_event
 from context_followups import followup_change, list_followups
@@ -325,6 +330,18 @@ def _parser() -> argparse.ArgumentParser:
     )
     links.add_argument("--vault")
     links.add_argument("--json", action="store_true")
+    compile_parser = context_sub.add_parser(
+        "compile", help="Assemble a compiled Context card bundle or stage a draft"
+    )
+    compile_parser.add_argument("selector")
+    compile_parser.add_argument("--stage", action="store_true")
+    compile_parser.add_argument("--content-file", type=Path)
+    compile_parser.add_argument("--target")
+    compile_parser.add_argument("--title")
+    compile_parser.add_argument("--idempotency-key")
+    compile_parser.add_argument("--limit", type=int, default=8)
+    compile_parser.add_argument("--vault")
+    compile_parser.add_argument("--json", action="store_true")
     history = context_sub.add_parser(
         "history", help="List applied event references for one Context"
     )
@@ -687,6 +704,46 @@ def main() -> int:
                     result,
                     json_output=args.json,
                     message=format_context_links(result),
+                )
+                return 0
+            elif args.context_command == "compile":
+                if args.stage:
+                    if not args.content_file:
+                        raise ValueError("--stage requires --content-file")
+                    path = args.content_file.expanduser().absolute()
+                    content = secure_read_bytes(path.parent, path.name).decode(
+                        "utf-8-sig"
+                    )
+                    staged = stage_compiled_card(
+                        registry,
+                        config,
+                        args.selector,
+                        content,
+                        target=args.target,
+                        title=args.title,
+                        idempotency_key=args.idempotency_key,
+                    )
+                    _emit(
+                        staged,
+                        json_output=args.json,
+                        message=(
+                            f"Staged only (no Vault write): {staged['action']} -> "
+                            f"{staged['relative_path']}\nPlan: {staged['plan_id']}\n"
+                            f"Commit: {staged['commit_command']}"
+                        ),
+                    )
+                    return 0
+                bundle = compile_context(
+                    registry,
+                    config,
+                    args.selector,
+                    limit=args.limit,
+                    target=args.target,
+                )
+                _emit(
+                    bundle,
+                    json_output=args.json,
+                    message=format_compile_bundle(bundle),
                 )
                 return 0
             elif args.context_command == "state":
