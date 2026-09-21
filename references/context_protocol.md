@@ -103,6 +103,14 @@ judgement or current-state claim. With `--stage --content-file PATH [--target RE
 reviewed card is frozen as an external broker plan (never a Vault write); the target directory
 must already exist, and the copy is written only by `capture --commit --plan-id <id>` under an
 `append-create` policy. Suggested targets default to `<first-directory-scope>/_compiled/<name>.md`.
+
+`contexts review [--context ID] [--limit N] [--no-record] --vault NAME [--json]` builds one
+bounded, prioritized agenda from maintenance-due Contexts, due follow-ups and the doctor's
+aggregated broken/ambiguous targets, keeping only findings reachable from a reviewed scope and
+ranking them by occurrence count. It appends an entry to the external `review_ledger.jsonl` and
+reports `new_item_ids`/`resolved_item_ids` deltas against the previous entry for the same scope.
+The command reads the Vault only — no repair, deletion or rewrite — and unscoped findings remain
+available through `quality`.
 Follow-up dates are deliberately unresolved in M1 and no reminder is scheduled.
 
 Both commands accept `--definitions PATH` for an explicit JSON declaration:

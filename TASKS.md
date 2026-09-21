@@ -48,7 +48,11 @@ from host-specific activation gates.
       open follow-ups, topic anchors, bounded cited evidence, Markdown scaffold) and stages a
       reviewed card as an external broker plan. Staging writes no Vault file; the target
       directory must already exist and the commit still runs through `capture --commit`.
-- [x] `tests/` suite: **176 tests**, ruff- and bytecode-clean.
+- [x] Deposition loop: `contexts review` produces a bounded, prioritized agenda (maintenance-due
+      Contexts, due follow-ups, aggregated maintained-scope doctor findings) and appends a durable
+      external ledger entry; re-runs report new and resolved items. The Vault is read-only and
+      unscoped findings remain available through `quality`.
+- [x] `tests/` suite: **183 tests**, ruff- and bytecode-clean.
 
 ## Open
 

@@ -122,6 +122,13 @@ production state into an arbitrary location or another Vault.
   already exist (no directory is created), and the Vault is written only by
   `capture --commit --plan-id <id>` under an explicit `append-create` policy. Suggested targets
   default to `<first-directory-scope>/_compiled/<name>.md`.
+- Assemble a bounded review agenda with `contexts review [--context ID] [--limit N]
+  [--no-record] --vault <name> [--json]`. It merges maintenance-due Contexts, due follow-ups,
+  and aggregated in-scope doctor findings (broken/ambiguous targets grouped by occurrence,
+  maintained scopes only) into one prioritized list, then appends a durable entry to an external
+  ledger. Re-running reports `new_item_ids` and `resolved_item_ids` deltas. The Vault is only
+  read: nothing is repaired, deleted or rewritten, and unscoped findings stay available through
+  `quality`.
 
 - Search before answering Vault-specific questions:
   `python scripts/knowledge_router.py search "<query>" --vault <name> --json`

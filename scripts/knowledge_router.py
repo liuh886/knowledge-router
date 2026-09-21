@@ -25,6 +25,7 @@ from context_delivery import deliver_followups
 from context_events import commit_event, context_history, inspect_event, preview_event
 from context_followups import followup_change, list_followups
 from context_maintenance import maintenance_queue
+from context_review import format_review_agenda, review_agenda
 from context_state import project_state
 from context_store import check_contexts, load_context_version, register_contexts
 from context_tick import poll_contexts
@@ -342,6 +343,14 @@ def _parser() -> argparse.ArgumentParser:
     compile_parser.add_argument("--limit", type=int, default=8)
     compile_parser.add_argument("--vault")
     compile_parser.add_argument("--json", action="store_true")
+    review = context_sub.add_parser(
+        "review", help="Bounded review agenda plus an external deposition ledger entry"
+    )
+    review.add_argument("--context")
+    review.add_argument("--limit", type=int, default=20)
+    review.add_argument("--no-record", action="store_true")
+    review.add_argument("--vault")
+    review.add_argument("--json", action="store_true")
     history = context_sub.add_parser(
         "history", help="List applied event references for one Context"
     )
@@ -744,6 +753,20 @@ def main() -> int:
                     bundle,
                     json_output=args.json,
                     message=format_compile_bundle(bundle),
+                )
+                return 0
+            elif args.context_command == "review":
+                agenda = review_agenda(
+                    registry,
+                    config,
+                    context_id=args.context,
+                    limit=args.limit,
+                    record=not args.no_record,
+                )
+                _emit(
+                    agenda,
+                    json_output=args.json,
+                    message=format_review_agenda(agenda),
                 )
                 return 0
             elif args.context_command == "state":

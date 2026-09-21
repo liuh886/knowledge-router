@@ -21,6 +21,7 @@ capture broker.
 | Context control records | `context_store.py` | External versioned definitions, revision conflicts, source-baseline drift checks; no Vault mutations |
 | Relationship graph | `link_graph.py` | Read-only external wikilink projection, MOC anchors and per-Context neighbourhoods (anchors, related Contexts, hubs, bridges); rebuildable, no Vault mutations |
 | Compiled cards | `context_compile.py` | Read-only compiled-card bundle (scaffold plus cited evidence) and external broker-plan staging; no Vault mutation outside the capture broker |
+| Deposition loop | `context_review.py` | Bounded, de-noised review agenda plus a durable external ledger with new/resolved deltas; Vault is read only |
 | Context event execution | `context_events.py` | Bind one frozen broker capture to multiple Contexts, publish durable receipts, resume indexing and expose historical event references |
 | Explicit state projection | `context_state.py` | Rebuild source-verified state declarations and replacement chains; preserve conflicting heads and logical lifecycle history |
 | Maintenance policy | `context_maintenance.py` | Opt-in review queue from registered policies, source baselines and verified review/lifecycle state; no scheduler or automatic repair |

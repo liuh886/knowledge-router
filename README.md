@@ -49,10 +49,11 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Explainable quality signals + Context-aware queue | `quality` |
 | Read-only Context relationship graph | `contexts links` |
 | Compiled Context card (bundle + staged draft) | `contexts compile` |
+| Bounded review agenda + external deposition ledger | `contexts review` |
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 30 modules are pure Python standard library. The full suite is **176 tests**. See
+All 31 modules are pure Python standard library. The full suite is **183 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
 
@@ -77,7 +78,10 @@ python scripts/knowledge_router.py contexts links project:main --vault personal
 # 5. Assemble a cited "current state" card scaffold for one Context (read-only)
 python scripts/knowledge_router.py contexts compile project:main --vault personal
 
-# 6. Preview a capture, then commit only the reviewed payload
+# 6. Run a bounded review agenda; each run is recorded in an external ledger
+python scripts/knowledge_router.py contexts review --vault personal
+
+# 7. Preview a capture, then commit only the reviewed payload
 python scripts/knowledge_router.py capture "Decided to defer the offline compression work" --vault personal
 python scripts/knowledge_router.py capture --vault personal --commit --plan-id <id>
 ```
@@ -139,12 +143,12 @@ knowledge-router/
 ├── SKILL.md                 # agent-facing command contract
 ├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
 ├── pyproject.toml           # pytest + ruff configuration
-├── scripts/                 # 30 stdlib-only modules
+├── scripts/                 # 31 stdlib-only modules
 ├── examples/contexts.json   # Context definition template
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 176 tests
+└── tests/                   # 183 tests
 ```
 
 ## Deferred (explicitly)

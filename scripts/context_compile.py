@@ -45,7 +45,7 @@ def _slug(value: str) -> str:
     return cleaned.strip("-") or "context"
 
 
-def _suggest_target(context: dict[str, Any]) -> str:
+def suggest_target(context: dict[str, Any]) -> str:
     bases = [scope for scope in context["scopes"] if not scope.endswith(".md")]
     base = bases[0] if bases else "."
     folder = f"{base.rstrip('/')}/{_COMPILE_DIR}" if base != "." else _COMPILE_DIR
@@ -154,7 +154,7 @@ def compile_context(
     followups = _open_items(registry, config, context["id"], limit)
     graph = load_link_graph(registry, config)
     anchors = scope_anchors(graph, context["scopes"], limit=limit)
-    suggested = target or _suggest_target(context)
+    suggested = target or suggest_target(context)
     template = _template(
         context,
         recorded_state=brief["recorded_state"],
@@ -206,7 +206,7 @@ def stage_compiled_card(
     if version is None:
         raise ValueError("No registered Context definitions; run contexts register first")
     context = select_context(version["definitions"]["contexts"], selector)
-    relative = target or _suggest_target(context)
+    relative = target or suggest_target(context)
     anchors = scope_anchors(load_link_graph(registry, config), context["scopes"], limit=3)
     routing = _CompiledRouting(
         action="create_new",
