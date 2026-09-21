@@ -189,6 +189,20 @@ def compile_context(
     }
 
 
+def _strip_leading_heading(content: str) -> str:
+    """Drop one leading H1 so the broker's own title heading is not duplicated."""
+    lines = content.splitlines()
+    index = 0
+    while index < len(lines) and not lines[index].strip():
+        index += 1
+    if index < len(lines) and lines[index].lstrip().startswith("# "):
+        index += 1
+        while index < len(lines) and not lines[index].strip():
+            index += 1
+        return "\n".join(lines[index:])
+    return content
+
+
 def stage_compiled_card(
     registry: VaultRegistry,
     config: VaultConfig,
@@ -215,7 +229,7 @@ def stage_compiled_card(
         suggested_frontmatter={
             "title": title or context["name"],
             "context_id": context["id"],
-            "compiled": True,
+            "compiled": "true",
         },
         suggested_wikilinks=[
             f"[[{PurePosixPath(item['path']).stem}]]" for item in anchors
@@ -224,7 +238,7 @@ def stage_compiled_card(
     plan = create_capture_plan(
         config.root_path,
         registry.vault_state_dir(config),
-        content,
+        _strip_leading_heading(content),
         routing,
         title=title or context["name"],
         idempotency_key=idempotency_key,

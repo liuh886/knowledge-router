@@ -109,7 +109,9 @@ def test_commit_creates_only_the_compiled_card(vault):
     after = _snapshot(root)
     added = set(after) - set(before)
     assert added == {"Area/_compiled/Area.md"}
-    assert CARD.strip().encode("utf-8") in after["Area/_compiled/Area.md"]
+    committed = after["Area/_compiled/Area.md"].decode("utf-8")
+    assert "## 当前状态" in committed and "- 进展中" in committed
+    assert sum(1 for line in committed.splitlines() if line.startswith("# ")) == 1
     assert compile_context(registry, config, "research:area")["existing_card"] is True
 
 
