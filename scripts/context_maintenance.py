@@ -19,7 +19,13 @@ def maintenance_queue(
     *,
     limit: int = 20,
     now: datetime | None = None,
+    source_scan=None,
 ) -> dict[str, Any]:
+    """Review queue from registered policies.
+
+    `source_scan` lets a caller share one read snapshot across steps, so two parts of the
+    same command cannot disagree about what the Vault looked like.
+    """
     if not 1 <= limit <= 100:
         raise ValueError("Queue limit must be between 1 and 100")
     now = now or datetime.now(UTC)
@@ -33,9 +39,38 @@ def maintenance_queue(
             "items": [],
             "item_count": 0,
         }
-    scan = scan_notes(config.root_path)
+    scan = source_scan or scan_notes(config.root_path)
+    # Only Contexts with an enabled policy are ever inspected, so only they need a source
+    # baseline. Computing bindings for every Context made a Vault with no maintenance policies
+    # pay the full cost for an empty queue.
+    enabled = [
+        context
+        for context in version["definitions"]["contexts"]
+        if (context.get("maintenance") or {}).get("enabled", True)
+        and context.get("maintenance")
+    ]
+    if not enabled:
+        return {
+            "schema_version": 1,
+            "vault_id": config.id,
+            "definition_revision": version["revision"],
+            "status": "no_policies",
+            "configured_context_count": 0,
+            "retired_contexts": [],
+            "item_count": 0,
+            "items": [],
+            "truncated": False,
+            "checked_at": now.isoformat(),
+            "writes_performed": 0,
+            "notifications_sent": 0,
+            "meaning": (
+                "Review candidates, not automatic repairs or scheduled reminders. No Context has "
+                "an enabled maintenance policy, so nothing was inspected and no source baseline "
+                "was computed."
+            ),
+        }
     discover_contexts(scan, vault_id=config.id, definitions=version["definitions"])
-    bindings = _bindings(version["definitions"], scan)
+    bindings = _bindings({"contexts": enabled}, scan)
     items = []
     configured = 0
     retired = []

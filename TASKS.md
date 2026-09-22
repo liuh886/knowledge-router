@@ -99,7 +99,7 @@ from host-specific activation gates.
       recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
       version is part of the generation hash, so changing the layout rebuilds instead of
       silently reusing a stale index.
-- [x] `tests/` suite: **271 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **273 tests**, ruff- and bytecode-clean.
 
 ## Correctness closeout (P0 of the roadmap review)
 
@@ -249,7 +249,7 @@ an acceptance condition. P0 and P1 are complete; P2 onward is queued.
 | A | A review of the derived-artifact code finds a reproduced defect | Contract fix + regression test | The reproduction no longer occurs; suite green | **done** (2026-09-22) |
 | B | A user asks what is currently known about a research topic or project | Versioned knowledge page + evidence manifest + budgeted `contexts get` | Two real Contexts published with real citations, served as `current`, expandable to the original notes; another session/agent can read them | **done** (2026-09-22) |
 | C | A real need to keep a page current | One Context update loop: new material → impact found → draft revised → basis verified → new version published → next session reads it | A supporting and a conflicting source are added: the page changes where it should, stays stable where it should not, the reason is traceable, and a failed run is recoverable | queued |
-| D | The pilot shows which calls are actually repeated | One shared read snapshot across `search`/`brief`/`compile`/`review`; expensive scans moved off the new-session path | Same quality with lower measured end-to-end latency, token cost and update cost; no speed-up claimed from internal FTS time alone | queued |
+| D | The pilot shows which calls are actually repeated | One shared read snapshot across `search`/`brief`/`compile`/`review`; expensive scans moved off the new-session path | Same quality with lower measured end-to-end latency, token cost and update cost; no speed-up claimed from internal FTS time alone | **partial**: `review` takes one snapshot (2 scans → 1) and skips the maintenance baseline when no policy is enabled (poll 14.09s → 0.03s, review 33.3s → 22.0s). Cross-command snapshot still queued. |
 | E | A task or a user correction is worth reusing | Candidate lessons/methods proposed, tried, then promoted; retractable | A similar but unseen task makes fewer known mistakes; a wrong lesson can be withdrawn; generated answers are never re-approved as their own evidence | queued |
 | F | Profiling shows a real bottleneck at the current scale | Incremental indexing, layered budget, optional hybrid retrieval/reranking | Measured gain against a fixed baseline; complexity without measured gain is not kept | deferred |
 
@@ -368,7 +368,7 @@ green. The remaining non-claimable gate is Ductor live activation/rollback and r
 transport delivery; distribution remains deferred.
 
 Tenth acceptance update (2026-09-19): M4 distribution packaging is complete. The stable local
-behavior was packaged into this repository (scripts, tests, the Ductor
+behavior was packaged into the published repository (scripts, tests, the Ductor
 bridge, SKILL.md, portable references, and rewritten README/DESIGN/TASKS/EVALUATE plus
 pyproject/LICENSE/.gitignore). The packaged copy passes 151 tests and ruff in isolation, and a
 standalone CLI attach/search smoke test returned a cited result. The bridge gained an explicit

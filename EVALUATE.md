@@ -307,3 +307,33 @@ Suite: **271 tests**, ruff clean. Unchanged limits: the card registry can only c
 after it existed; an unverified-basis card is flagged rather than retro-fixed; and the token budget
 remains an estimate.
 
+## 2026-09-22 — one read snapshot per command, and honest coverage
+
+The roadmap review's last recommendation was to unify source reading and move expensive scanning off
+the repeated paths. A measurement on the reference Vault (2,144 notes) came first, because the claim
+was about cost and guessing would have been wrong.
+
+A single `contexts review` used to read the whole Vault twice: once through the maintenance poll and
+once for the quality and card checks, so the two halves of one agenda could also disagree about what
+the Vault looked like. `poll_contexts` and `maintenance_queue` now accept a `source_scan`, and review
+takes one snapshot and passes it down. Measured scan calls per review: 2 -> 1.
+
+The measurement then showed the real cost was somewhere else. Before the change: scan 8.1s, poll
+14.1s, quality 10.8s, cards 0.3s (33.3s). The poll produced **zero items** and still cost the most,
+because `maintenance_queue` computed a scope-and-checksum baseline for every Context even though the
+loop only inspects Contexts with an enabled policy — and none of the six have one. It now computes
+the baseline only for enabled policies, and returns `no_policies` without computing anything when
+there are none: poll 14.09s -> 0.03s, total 33.3s -> 22.0s (−34%).
+
+An empty poll no longer reads as "maintenance is covered". `poll_contexts` reports
+`maintenance_status` and `maintenance_configured_contexts`, the review basis carries them, and the
+printed agenda states that zero Contexts have an enabled policy so the empty result is a coverage gap
+rather than a clean bill of health. That was the documented intent — an unconfigured policy is shown
+as unconfigured, never as active coverage — which the earlier `clear` status had quietly hidden.
+
+Stated limits: this is one command's snapshot, not a shared snapshot across `search`/`brief`/
+`compile`/`review` — that remains roadmap item D. `diagnose_vault` (10.8s) is now the dominant cost
+of a review, and nothing here reduces it. The measurement is one machine, one Vault and one run; the
+percentages are not a general performance claim.
+
+Suite: **273 tests**, ruff clean.

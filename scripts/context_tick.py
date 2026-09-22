@@ -21,7 +21,13 @@ def poll_contexts(
     limit: int = 20,
     max_contexts: int = 100,
     now: datetime | None = None,
+    source_scan=None,
 ) -> dict[str, Any]:
+    """One scheduler poll.
+
+    `source_scan` shares a caller's read snapshot instead of scanning the Vault again, so
+    every step of one command sees the same source state.
+    """
     if not 1 <= limit <= 100 or not 1 <= max_contexts <= 1000:
         raise ValueError("Tick limits must be 1-100 items and 1-1000 Contexts")
     now = now or datetime.now(UTC)
@@ -37,8 +43,11 @@ def poll_contexts(
             ids.update(c["id"] for c in version["definitions"]["contexts"])
     except (OSError, ValueError, RuntimeError, TypeError, KeyError) as exc:
         errors.append({"stage": "definitions", "error": str(exc)})
+    maintenance: dict[str, Any] = {}
     try:
-        maintenance = maintenance_queue(registry, config, limit=100, now=now)
+        maintenance = maintenance_queue(
+            registry, config, limit=100, now=now, source_scan=source_scan
+        )
         items.extend({"kind": "maintenance", **i} for i in maintenance["items"])
         incomplete |= maintenance.get("truncated", False)
     except (OSError, ValueError, RuntimeError, TypeError, KeyError) as exc:
@@ -94,6 +103,13 @@ def poll_contexts(
         "error_count": len(errors),
         "scan_incomplete": incomplete or bool(errors),
         "output_truncated": len(items) > limit or len(errors) > limit,
+        # Surfaced separately so an empty poll is not read as "maintenance is covered": with no
+        # enabled policy nothing was inspected at all.
+        "maintenance_status": maintenance.get("status") if maintenance else None,
+        "maintenance_configured_contexts": int(
+            (maintenance or {}).get("configured_context_count", 0)
+        ),
+        "maintenance_retired_contexts": list((maintenance or {}).get("retired_contexts", ())),
         "notifications_sent": 0,
         "writes_performed": 0,
         "meaning": "Poll result, not a delivery receipt. Compare fingerprints only after a complete scan; acknowledge notifications separately.",

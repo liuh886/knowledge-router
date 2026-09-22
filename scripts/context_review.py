@@ -442,7 +442,13 @@ def review_agenda(
 
     from context_tick import poll_contexts
 
-    poll = poll_contexts(registry, config, limit=100, max_contexts=200, now=now)
+    # One read snapshot for the whole agenda: the maintenance poll and the quality/card checks
+    # must not be able to disagree about what the Vault looked like, and the Vault must not be
+    # read twice for one command.
+    scan = scan_notes(config.root_path)
+    poll = poll_contexts(
+        registry, config, limit=100, max_contexts=200, now=now, source_scan=scan
+    )
     items: list[dict[str, Any]] = []
     for entry in poll["items"]:
         if context_id and entry.get("context_id") != context_id:
@@ -460,7 +466,6 @@ def review_agenda(
                 "id": entry.get("id"),
             }
         )
-    scan = scan_notes(config.root_path)
     card_registry = load_card_registry(registry, config)
     card_registry_state = str(card_registry["state"])
     card_registry_reason = card_registry.get("reason")
@@ -497,6 +502,8 @@ def review_agenda(
         "poll_truncated": bool(poll.get("output_truncated"))
         or int(poll.get("context_count", 0)) > int(poll.get("contexts_checked", 0)),
         "poll_items_shown": len(poll.get("items", ())),
+        "maintenance_status": poll.get("maintenance_status"),
+        "maintenance_configured_contexts": poll.get("maintenance_configured_contexts"),
         "context_revision": version["revision"] if version else 0,
         "definitions_fingerprint": definitions_fingerprint(contexts),
         "diagnostics_version": DIAGNOSTICS_VERSION,
@@ -625,6 +632,12 @@ def format_review_agenda(result: dict[str, Any]) -> str:
         lines.append(
             f"仅显示 code={result['display_filter']} 的 {result['display_matched']} 项"
             f"（共 {result['item_count']} 项；筛选只影响显示）"
+        )
+    if not result["basis"].get("maintenance_configured_contexts"):
+        # An empty poll otherwise reads as "maintenance is covered"; show the coverage gap.
+        lines.append(
+            "维护覆盖：0 个 Context 启用维护策略，本轮没有检查任何范围，"
+            "空议程不代表维护正常"
         )
     if result.get("counts_by_hint"):
         lines.append(f"线索分布（仅提示，不构成忽略依据）：{result['counts_by_hint']}")

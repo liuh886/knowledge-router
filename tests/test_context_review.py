@@ -617,6 +617,51 @@ def test_externally_edited_card_is_flagged(tmp_path):
     assert "compiled_card_edited_externally" in codes
 
 
+def test_agenda_shows_a_maintenance_coverage_gap(tmp_path):
+    """An empty poll must not read as "maintenance is covered" when no policy is enabled."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Clean.md").write_text("# Clean\n[[Clean2]]", encoding="utf-8")
+    (root / "Area" / "Clean2.md").write_text("# Clean2\n[[Clean]]", encoding="utf-8")
+    definitions = json.loads(json.dumps(DEFINITIONS))
+    definitions["contexts"][0]["maintenance"] = {"enabled": False}
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="coverage")
+    register_contexts(registry, config, definitions)
+
+    result = review_agenda(registry, config, record=False)
+    assert result["basis"]["maintenance_status"] == "no_policies"
+    assert result["basis"]["maintenance_configured_contexts"] == 0
+    assert "维护覆盖" in format_review_agenda(result)
+
+
+def test_no_enabled_policy_skips_the_source_baseline(tmp_path, monkeypatch):
+    """Nothing is inspected when no policy is enabled, so no baseline is computed."""
+    import context_maintenance
+
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Clean.md").write_text("# Clean\nbody", encoding="utf-8")
+    definitions = json.loads(json.dumps(DEFINITIONS))
+    definitions["contexts"][0]["maintenance"] = {"enabled": False}
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="skip")
+    register_contexts(registry, config, definitions)
+
+    calls = {"n": 0}
+    real = context_maintenance._bindings
+
+    def counting(*args, **kwargs):
+        calls["n"] += 1
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(context_maintenance, "_bindings", counting)
+    queue = context_maintenance.maintenance_queue(registry, config)
+    assert queue["status"] == "no_policies"
+    assert queue["items"] == []
+    assert calls["n"] == 0, "no baseline should be computed for an empty policy set"
+
+
 def test_delta_is_incomparable_against_a_pre_fix_ledger_entry(vault):
     """An older ledger entry without a full basis cannot confirm resolutions."""
     registry, config, _ = vault
