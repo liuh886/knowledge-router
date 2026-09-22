@@ -161,6 +161,23 @@ production state into an arbitrary location or another Vault.
   `append-create`.
 - Drop redundant per-revision binding snapshots from external state with `contexts compact
   --vault <name>`; historical definitions are preserved and the Vault is untouched.
+- Publish a versioned **knowledge page** (what a Context currently supports) with
+  `contexts page publish <selector> --content-file <draft.md> [--name FILE.md] [--out-root DIR]
+  [--overwrite] --vault <name>`. It writes into an external knowledge area (`<vault>_knowledge/`)
+  and never touches the Vault. Read [references/knowledge_pages.md](references/knowledge_pages.md)
+  for the draft syntax. The rule it enforces: a **sourced** claim must cite at least one real note
+  (recorded with its checksum), an **inference** must be labelled and cites nothing, and a citation
+  to a note that does not exist is refused — that is indistinguishable from a fabricated citation.
+  The tool never writes the prose; the caller authors the claims and the tool validates them.
+- Read a page as a **budgeted context pack** with
+  `contexts get <selector> [--budget-tokens N] --vault <name> [--json]`. It returns purpose, scope,
+  the claims (each marked `sourced`/`conflict`/`inference`), open questions, coverage and the
+  estimated token cost. Claims that do not fit the budget are omitted and counted
+  (`claims_omitted_by_budget`); the total is always reported.
+- Expand one claim to its sources as they are **now** with
+  `contexts expand <page_id> <claim_id> [--depth brief|full] --vault <name>`. A citation returns
+  `current`, `changed` or `missing`; changed/missing means the page is stale, not that the claim is
+  wrong. Inspect the set with `contexts page list` and `contexts page show <page_id>`.
 - Link diagnostics and `contexts links` share one resolver (`link_resolver.py`) and follow
   Obsidian's documented behaviour: a target that carries a path is resolved as a path (normalised
   relative to the note, then vault-relative), and a bare target by unique filename and then unique

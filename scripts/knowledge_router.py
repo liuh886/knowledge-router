@@ -44,6 +44,16 @@ from due_time import resolve_due_time
 from evidence import EvidenceRecord, merge_evidence
 from fts_indexer import audit_index, scan_notes
 from link_convergence import converge_targets, format_convergence, stage_missing_note
+from knowledge_page import (
+    context_pack,
+    expand_claim,
+    find_page,
+    format_expand,
+    format_page_pack,
+    load_pages,
+    page_status,
+    publish_page,
+)
 from link_graph import context_links, format_context_links
 from project_adapter import (
     list_projects as list_catalog_projects,
@@ -399,6 +409,42 @@ def _parser() -> argparse.ArgumentParser:
     )
     compact.add_argument("--vault")
     compact.add_argument("--json", action="store_true")
+    get_parser = context_sub.add_parser(
+        "get", help="Assemble a budgeted, source-grounded context pack"
+    )
+    get_parser.add_argument("selector")
+    get_parser.add_argument("--budget-tokens", type=int, default=1200)
+    get_parser.add_argument("--vault")
+    get_parser.add_argument("--json", action="store_true")
+    expand_parser = context_sub.add_parser(
+        "expand", help="Expand one published claim to its cited sources"
+    )
+    expand_parser.add_argument("page_id")
+    expand_parser.add_argument("claim_id")
+    expand_parser.add_argument("--depth", choices=("brief", "full"), default="brief")
+    expand_parser.add_argument("--vault")
+    expand_parser.add_argument("--json", action="store_true")
+    page_parser = context_sub.add_parser(
+        "page", help="Publish, list or inspect versioned knowledge pages"
+    )
+    page_sub = page_parser.add_subparsers(dest="page_command", required=True)
+    page_publish = page_sub.add_parser("publish")
+    page_publish.add_argument("selector")
+    page_publish.add_argument("--content-file", type=Path, required=True)
+    page_publish.add_argument("--name")
+    page_publish.add_argument("--out-root")
+    page_publish.add_argument("--overwrite", action="store_true")
+    page_publish.add_argument("--title")
+    page_publish.add_argument("--page-type")
+    page_publish.add_argument("--vault")
+    page_publish.add_argument("--json", action="store_true")
+    page_list = page_sub.add_parser("list")
+    page_list.add_argument("--vault")
+    page_list.add_argument("--json", action="store_true")
+    page_show = page_sub.add_parser("show")
+    page_show.add_argument("page_id")
+    page_show.add_argument("--vault")
+    page_show.add_argument("--json", action="store_true")
     history = context_sub.add_parser(
         "history", help="List applied event references for one Context"
     )
@@ -919,6 +965,96 @@ def main() -> int:
                         f"状态 {result['status']} · 压缩 {result['revisions_compacted']} 个历史版本 · "
                         f"{result['bytes_before']:,} -> {result['bytes_after']:,} 字节"
                         f"（省 {result.get('bytes_saved', 0):,}）"
+                    ),
+                )
+                return 0
+            elif args.context_command == "get":
+                pack = context_pack(
+                    registry,
+                    config,
+                    args.selector,
+                    budget_tokens=args.budget_tokens,
+                )
+                _emit(
+                    pack,
+                    json_output=args.json,
+                    message=format_page_pack(pack),
+                )
+                return 0
+            elif args.context_command == "expand":
+                expanded = expand_claim(
+                    registry, config, args.page_id, args.claim_id, depth=args.depth
+                )
+                _emit(
+                    expanded,
+                    json_output=args.json,
+                    message=format_expand(expanded),
+                )
+                return 0
+            elif args.context_command == "page":
+                if args.page_command == "publish":
+                    draft_path = args.content_file.expanduser().absolute()
+                    draft = secure_read_bytes(
+                        draft_path.parent, draft_path.name
+                    ).decode("utf-8-sig")
+                    published = publish_page(
+                        registry,
+                        config,
+                        args.selector,
+                        draft,
+                        name=args.name,
+                        out_root=args.out_root,
+                        overwrite=args.overwrite,
+                        title=args.title,
+                        page_type=args.page_type,
+                    )
+                    _emit(
+                        published,
+                        json_output=args.json,
+                        message=(
+                            f"已发布知识页 v{published['version']}：{published['path']}\n"
+                            f"主张 {published['claim_count']} 条 "
+                            f"（{published['claims_by_kind']}）· 引用 "
+                            f"{published['citation_count']} 处 · 未碰 Vault"
+                        ),
+                    )
+                    return 0
+                if args.page_command == "list":
+                    pages = load_pages(registry, config)
+                    rows = []
+                    for page in pages:
+                        status = page_status(registry, config, page)
+                        rows.append(
+                            {
+                                "page_id": page.get("page_id"),
+                                "version": page.get("version"),
+                                "path": page.get("path"),
+                                "claim_count": len(page.get("claims", [])),
+                                "stale": status["stale"],
+                            }
+                        )
+                    _emit(
+                        {"page_count": len(rows), "pages": rows},
+                        json_output=args.json,
+                        message="\n".join(
+                            f"{row['page_id']} v{row['version']} stale={row['stale']} "
+                            f"{row['path']}"
+                            for row in rows
+                        )
+                        or "尚未发布任何知识页。",
+                    )
+                    return 0
+                page = find_page(registry, config, args.page_id)
+                if page is None:
+                    raise FileNotFoundError(f"No published page matches: {args.page_id}")
+                status = page_status(registry, config, page)
+                _emit(
+                    {"page": page, "status": status},
+                    json_output=args.json,
+                    message=(
+                        f"{page['page_id']} v{page['version']} · stale={status['stale']} · "
+                        f"来源 {page['source_count']} 条 · 主张 {len(page['claims'])} 条\n"
+                        f"{page['path']}"
                     ),
                 )
                 return 0

@@ -1,8 +1,7 @@
 # Windows-local architecture
 
-This document is the authoritative architecture for the local delivery. The repository at
-`D:\Documents\GitHub\knowledge-router` remains a future portability target and may still describe
-the earlier prototype.
+This document is the authoritative architecture for the local delivery. The published
+repository remains a future portability target and may still describe the earlier prototype.
 
 ## Product boundary
 
@@ -22,6 +21,7 @@ capture broker.
 | Relationship graph | `link_graph.py` | Read-only external wikilink projection, MOC anchors and per-Context neighbourhoods (anchors, related Contexts, hubs, bridges); rebuildable, no Vault mutations |
 | Link resolution | `link_resolver.py` | Single read-only resolution of `[[wikilinks]]` shared by diagnostics and the graph so the two can never disagree. Follows Obsidian's documented behaviour: a target carrying a path is resolved as a path (normalised relative to the note, then vault-relative), a bare target by unique filename then unique alias. A note-relative path is normalised lexically so `.`/`..` works and a target escaping the Vault is refused rather than matched elsewhere. Ambiguity stays ambiguity, and an unresolved path whose basename is unique elsewhere is reported as an undocumented-fallback case rather than silently decided |
 | Compiled cards | `context_compile.py` | Read-only compiled-card bundle (scaffold plus cited evidence), external broker-plan staging, and a durable registry of real output paths plus `{source: checksum}` dependencies so custom `--out-root`/`--name` cards can be judged stale; no Vault mutation outside the capture broker |
+| Knowledge pages | `knowledge_page.py` | Versioned "what we currently believe" pages for a research topic or project, published into an external knowledge area with a claim-level evidence manifest. A sourced claim must cite a real note whose checksum is recorded; inference is labelled and can never be read as sourced; a citation to a missing note is refused. Serves a budgeted context pack and claim expansion; never writes the Vault |
 | Deposition loop | `context_review.py` | Bounded, de-noised review agenda (maintenance, follow-ups, stale/scope-changed/missing registered cards, aggregated in-scope findings and in-scope orphans) plus a durable external ledger. Its `basis` is semantic — Context revision, definitions fingerprint and diagnostics version — so a scope or rule change refuses the comparison instead of reporting a repair, and an incomplete basis exits non-zero |
 | Link convergence | `link_convergence.py` | Groups repeated unresolved targets into one decision each (case-insensitive, noise excluded but counted) and proposes a step with its evidence; can stage, but never perform, a broker create for a chosen target |
 | Context event execution | `context_events.py` | Bind one frozen broker capture to multiple Contexts, publish durable receipts, resume indexing and expose historical event references |

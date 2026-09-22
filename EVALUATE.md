@@ -213,3 +213,41 @@ evidence, not a verdict.
 
 Suite: **236 tests**, ruff clean.
 
+## 2026-09-22 — P1: versioned knowledge pages
+
+The roadmap review's P1 asks for one research topic and one project to have a knowledge page, an
+evidence manifest, and a budgeted context pack. It is implemented as an external derived artifact
+(the review's option (c)), so no new write primitive is introduced and the Vault stays untouched.
+
+The property that makes a page worth trusting is the distinction it preserves between a **sourced**
+claim and an **inference**. So the draft format is deliberately narrow and refusals are explicit: a
+sourced claim must cite at least one real note (recorded with its checksum); an inference must be
+labelled and cites nothing; a `[conflict]` claim needs at least two sources; and a citation to a note
+that does not exist, or to lines beyond the end of the note, is rejected outright — an unresolvable
+citation is indistinguishable from a fabricated one. Items with no marker are refused rather than
+guessed at. The tool never writes the prose; it validates claims the caller authored.
+
+Reads are budgeted and honest about it: `contexts get` returns purpose, scope, claims marked
+`sourced`/`conflict`/`inference`, open questions, coverage and its own estimated token cost, with
+claims that do not fit omitted **and counted**, so a caller never receives a silent truncation.
+`contexts expand` returns a claim's sources as they are now, each `current` / `changed` / `missing`;
+changed or missing means the page is stale, not that the claim is wrong.
+
+Acceptance on the packaged Vault: `research:ccs` and `topic:new_business` were each published with
+real citations read from the notes, served as `current`, and expanded to genuine excerpts. Basing the
+citations on the Vault's own retrieval also caught two would-be errors before publishing — an
+inference asserting `dMRV` had no note (it does), and a personnel judgement that was unnecessary.
+
+One bug was found by the acceptance run and fixed: staleness compared the scoped source snapshot
+against *all* Vault notes, so both pages reported stale the moment they were published. Drift is now
+computed against the Context's current scoped set, which also means a newly added in-scope note makes
+an existing page stale. The regression is pinned by a fixture containing an out-of-scope note.
+
+Stated limits: no `[conflict]` claim was published on the real Vault because no verified disagreement
+between two sources was found, so that path is covered by tests only; the token budget is an estimate
+(CJK characters as one token, others as one quarter), not a tokenizer; re-scoping marks a page
+`scope_changed` but never rewrites it or decides which claims survive; and a page remains a record of
+what a Context's sources support, not a guarantee that its claims are true.
+
+Suite: **256 tests**, ruff clean.
+

@@ -99,7 +99,7 @@ from host-specific activation gates.
       recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
       version is part of the generation hash, so changing the layout rebuilds instead of
       silently reusing a stale index.
-- [x] `tests/` suite: **236 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **256 tests**, ruff- and bytecode-clean.
 
 ## Correctness closeout (P0 of the roadmap review)
 
@@ -122,6 +122,41 @@ Four reproduced boundary defects were re-verified as still open and then fixed:
       `compiled_card_stale` (including newly **added** sources), `compiled_card_scope_changed` or
       `compiled_card_missing` for custom `--out-root`/`--name` locations. Pre-registry cards keep the
       default-path mtime fallback and are not retro-adopted, because their dependencies are unknown.
+
+## P1 — a usable Context Base: versioned knowledge pages
+
+The roadmap review's P1 asks for one research topic and one project to have a knowledge page, an
+evidence manifest, and a budgeted context pack. Implemented as an **external derived artifact** (the
+roadmap's option (c)), so no new write primitive is needed and the Vault stays untouched.
+
+- [x] `contexts page publish <selector> --content-file <draft.md>` validates a draft against the
+      Vault and publishes a **versioned page** into `<vault>_knowledge/`. Every publish records the
+      page version, the Context revision, the definitions fingerprint and the scoped source snapshot.
+- [x] **Sourced vs inference is enforced, not suggested.** A sourced claim must cite at least one
+      real note (recorded with its checksum); an inference must be labelled and cites nothing; a
+      `[conflict]` claim needs at least two sources. A citation to a note that does not exist, or to
+      lines beyond the end of the note, is **refused** — an unresolvable citation is indistinguishable
+      from a fabricated one. Undecorated items are refused rather than guessed at.
+- [x] `contexts get <selector> --budget-tokens N` returns a **budgeted pack**: purpose, scope, claims
+      marked `sourced`/`conflict`/`inference`, open questions, coverage, and its own estimated token
+      cost. Claims that do not fit are omitted and counted, and the total is always reported, so a
+      caller is never handed a silent truncation.
+- [x] `contexts expand <page_id> <claim_id>` returns the claim next to its sources **as they are now**,
+      each marked `current` / `changed` / `missing`. Drift compares the Context's current scoped set,
+      so a newly added in-scope note makes an existing page stale.
+- [x] `contexts page list` / `contexts page show` for inspection, with per-page staleness.
+- [x] Reference: [`references/knowledge_pages.md`](references/knowledge_pages.md) documents the draft
+      syntax and its refusal rules.
+
+Acceptance run on the packaged Vault: `research:ccs` (research topic) and `topic:new_business`
+(project) each published with real citations, `contexts get` served both as `current`, and
+`contexts expand` returned genuine excerpts. One bug was found this way and fixed: staleness compared
+the scoped snapshot against *all* Vault notes, so every page looked stale immediately.
+
+Stated limits: no conflict claim was published on the real Vault because no verified disagreement
+between two sources was found, so that path is covered by tests only; the token budget is an estimate,
+not a tokenizer; re-scoping marks a page `scope_changed` but never rewrites it or decides which claims
+survive.
 
 ## Open
 
