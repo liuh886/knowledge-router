@@ -239,22 +239,17 @@ active status or authorize writes. A preview is not a committed event, a detecte
 scheduled reminder, and a maintenance hook is not a running daemon. Existing source-protection and
 broker guarantees remain in force.
 
-## Roadmap delivery queue (from the landscape review)
+## Roadmap delivery queue
 
-Research conclusions only become work when they are written here with a trigger, a deliverable and
-an acceptance condition. P0 and P1 are complete; P2 onward is queued.
+The delivery queue, its acceptance conditions and the resume procedure now live in
+[`docs/development-plan.zh.md`](docs/development-plan.zh.md). That document is authoritative for the
+plan; this file stays the item-by-item implementation record.
 
-| # | Trigger | Deliverable | Acceptance | State |
-|---|---|---|---|---|
-| A | A review of the derived-artifact code finds a reproduced defect | Contract fix + regression test | The reproduction no longer occurs; suite green | **done** (2026-09-22) |
-| B | A user asks what is currently known about a research topic or project | Versioned knowledge page + evidence manifest + budgeted `contexts get` | Two real Contexts published with real citations, served as `current`, expandable to the original notes; another session/agent can read them | **done** (2026-09-22) |
-| C | A real need to keep a page current | One Context update loop: new material → impact found → draft revised → basis verified → new version published → next session reads it | A supporting and a conflicting source are added: the page changes where it should, stays stable where it should not, the reason is traceable, and a failed run is recoverable | queued |
-| D | The pilot shows which calls are actually repeated | One shared read snapshot across `search`/`brief`/`compile`/`review`; expensive scans moved off the new-session path | Same quality with lower measured end-to-end latency, token cost and update cost; no speed-up claimed from internal FTS time alone | **partial**: `review` takes one snapshot (2 scans → 1) and skips the maintenance baseline when no policy is enabled (poll 14.09s → 0.03s, review 33.3s → 22.0s). Cross-command snapshot still queued. |
-| E | A task or a user correction is worth reusing | Candidate lessons/methods proposed, tried, then promoted; retractable | A similar but unseen task makes fewer known mistakes; a wrong lesson can be withdrawn; generated answers are never re-approved as their own evidence | queued |
-| F | Profiling shows a real bottleneck at the current scale | Incremental indexing, layered budget, optional hybrid retrieval/reranking | Measured gain against a fixed baseline; complexity without measured gain is not kept | deferred |
-
-Explicit non-goals for now: a vector database, an always-on service, a separate memory system, and
-bulk placeholder creation. The orphan signal helps find content; it is not a to-do to drive to zero.
+Summary as of 2026-09-22: A (contract fixes) and B (versioned knowledge pages) are done; C (one
+Context update loop), D (one shared read snapshot; `review` done, cross-command still queued),
+E (learning from work) and F (profiling-driven optimisation) remain. Non-goals: a vector database,
+an always-on service, a separate memory system, and bulk placeholder creation. The orphan signal
+helps find content; it is not a to-do to drive to zero.
 
 ## 2026-09-10 — Approved OpenCode execution batch
 

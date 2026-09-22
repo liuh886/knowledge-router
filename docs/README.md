@@ -6,6 +6,11 @@ Welcome to the **KnowledgeRouter** technical documentation and research reposito
 
 ## 📚 Table of Contents
 
+### 0. Plan
+* **[Development plan](development-plan.zh.md)**: Where the project stands, the decisions already taken,
+  the remaining delivery items with their acceptance conditions, the stated non-goals and the known
+  unverified limits. Authoritative for the plan; `TASKS.md` stays the implementation record.
+
 ### 1. Core Architecture & Specification
 * **[System Design Specification](../DESIGN.md)**: Full architectural blueprint, data flow contracts, and subsystem definitions.
 * **[Evaluation Criteria & Quality Benchmarks](../EVALUATE.md)**: Evaluation fixtures, search latency thresholds, and accuracy metrics.
@@ -29,7 +34,7 @@ Welcome to the **KnowledgeRouter** technical documentation and research reposito
 * **[Safety & Mutation Contract](../references/safety_contract.md)**: Non-destructive mutation rules protecting human-authored Markdown.
 * **[Runtime Layout](../references/runtime_layout.md)** and **[Architecture](../references/architecture.md)**: Where external state lives and which modules own it.
 
-### 4. Product Reviews & Roadmap (Chinese)
+### 4. Product Reviews (Chinese)
 
 Dated review notes behind the current direction. They are kept as a record of what was verified
 when, including the findings that were later fixed and the limits that remain.
@@ -39,6 +44,8 @@ when, including the findings that were later fixed and the limits that remain.
   distributed.
 * **[Reassessment](development-reassessment-2026-09-22.zh.md)**: Re-check after the S1/S2 batch; lists
   the four reproduced boundary defects that were subsequently fixed.
+* **[Update review](update-review-2026-09-22.zh.md)**: Review of the fixes above, which reproduced six
+  further defects in the derived-artifact mechanisms; all six were fixed afterwards.
 * **[Product and architecture strategy](product-and-architecture-strategy-2026-09-22.zh.md)**:
   Competitive capability comparison, the split query path, and the missing dependency record for
   derived artifacts.
