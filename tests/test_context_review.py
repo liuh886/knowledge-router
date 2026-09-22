@@ -12,6 +12,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from context_compile import (
+    compiled_card_name,
+    compiled_root,
     compile_context,
     scoped_source_dependencies,
     source_snapshot_sha256,
@@ -660,6 +662,27 @@ def test_no_enabled_policy_skips_the_source_baseline(tmp_path, monkeypatch):
     assert queue["status"] == "no_policies"
     assert queue["items"] == []
     assert calls["n"] == 0, "no baseline should be computed for an empty policy set"
+
+
+def test_unregistered_card_is_flagged_rather_than_silently_trusted(tmp_path):
+    """A card with no record cannot be validated, so it must not pass as current.
+
+    A newer modification time than its sources is not evidence: its content and authoring
+    basis are both unknown to the tool.
+    """
+    registry, config, _ = _compiled_vault(tmp_path)
+    card_dir = compiled_root(config)
+    card_dir.mkdir(parents=True, exist_ok=True)
+    card = card_dir / compiled_card_name(DEFINITIONS["contexts"][0])
+    card.write_text("# hand-written card, never registered\n", encoding="utf-8")
+
+    result = review_agenda(registry, config, record=False)
+    item = next(
+        row for row in result["items"] if row.get("code") == "compiled_card_unregistered"
+    )
+    assert item["path"] == f"{card_dir.name}/{card.name}"
+    assert item["basis"] == "unregistered"
+    assert "无法判断" in item["reason"]
 
 
 def test_delta_is_incomparable_against_a_pre_fix_ledger_entry(vault):

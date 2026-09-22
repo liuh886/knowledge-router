@@ -334,9 +334,33 @@ def _stale_card_items(
                         "code": "compiled_card_stale",
                         "reason": "A scoped source changed after the compiled card was written",
                         "path": target,
+                        "basis": "unregistered",
                         "suggestion": (
                             f"contexts compile {row['id']} --save --content-file <draft>"
+                            f" --expected-source-snapshot <bundle hash>"
                             "  # then review and re-save"
+                        ),
+                    }
+                )
+            else:
+                # The card exists but has no record, so nothing about its content or its
+                # authoring basis can be checked. Its modification time being older than its
+                # sources is not evidence that it is current.
+                items.append(
+                    {
+                        "kind": "compiled_card_stale",
+                        "context_id": row["id"],
+                        "code": "compiled_card_unregistered",
+                        "reason": (
+                            "该卡在登记机制之前写就，没有输出路径与来源依据记录，"
+                            "无法判断它是否仍然有效"
+                        ),
+                        "path": target,
+                        "basis": "unregistered",
+                        "suggestion": (
+                            f"contexts compile {row['id']} --save --content-file <draft>"
+                            f" --expected-source-snapshot <bundle hash> --overwrite"
+                            "  # 重新发布后即可被追踪"
                         ),
                     }
                 )
