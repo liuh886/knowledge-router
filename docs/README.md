@@ -25,5 +25,23 @@ Welcome to the **KnowledgeRouter** technical documentation and research reposito
   - How the community tackled "AI slop inflation", "flat wiki collapse", and token costs.
 
 ### 3. Agent Skills & Protocols
-* **[4D Cognitive Routing Protocol](../../.codex/skills/knowledge-router/references/routing_protocol.md)**: Formal specification of the 4-dimensional intent resolution engine.
-* **[Safety & Mutation Contract](../../.codex/skills/knowledge-router/references/safety_contract.md)**: Non-destructive mutation rules protecting human-authored Markdown.
+* **[4D Cognitive Routing Protocol](../references/routing_protocol.md)**: Formal specification of the 4-dimensional intent resolution engine.
+* **[Safety & Mutation Contract](../references/safety_contract.md)**: Non-destructive mutation rules protecting human-authored Markdown.
+* **[Runtime Layout](../references/runtime_layout.md)** and **[Architecture](../references/architecture.md)**: Where external state lives and which modules own it.
+
+### 4. Product Reviews & Roadmap (Chinese)
+
+Dated review notes behind the current direction. They are kept as a record of what was verified
+when, including the findings that were later fixed and the limits that remain.
+
+* **[Development assessment](development-assessment-2026-09-22.zh.md)**: First independent review of
+  the installed integration and the two-corpus picture. Contains local machine paths, so it is not
+  distributed.
+* **[Reassessment](development-reassessment-2026-09-22.zh.md)**: Re-check after the S1/S2 batch; lists
+  the four reproduced boundary defects that were subsequently fixed.
+* **[Product and architecture strategy](product-and-architecture-strategy-2026-09-22.zh.md)**:
+  Competitive capability comparison, the split query path, and the missing dependency record for
+  derived artifacts.
+* **[Context base landscape and roadmap](context-base-landscape-and-roadmap-2026-09-22.zh.md)**:
+  Supersedes the strategy note. Reframes the goal as a user-owned, source-grounded, continuously
+  revisable context base, and sets the P0-P4 order plus the acceptance story.
