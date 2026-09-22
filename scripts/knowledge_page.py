@@ -39,7 +39,11 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from context_manager import extract_tags, note_in_context
-from context_compile import definitions_fingerprint, select_context
+from context_compile import (
+    definition_fingerprint,
+    definitions_fingerprint,
+    select_context,
+)
 from context_store import load_context_version
 from fts_indexer import scan_notes
 from registry import (
@@ -291,19 +295,60 @@ def _registry_path(registry: VaultRegistry, config: VaultConfig) -> Path:
     return registry.vault_state_dir(config) / _PAGE_REGISTRY
 
 
-def load_pages(registry: VaultRegistry, config: VaultConfig) -> list[dict[str, Any]]:
-    """Read the page registry; a damaged registry never invents pages."""
+REGISTRY_ABSENT = "absent"
+REGISTRY_VALID = "valid"
+REGISTRY_UNREADABLE = "unreadable"
+REGISTRY_INVALID = "invalid"
+_PAGE_REQUIRED = ("page_id", "context_id", "path", "claims")
+
+
+def load_page_registry(registry: VaultRegistry, config: VaultConfig) -> dict[str, Any]:
+    """Read the page registry, reporting *why* it is empty instead of just being empty."""
     path = _registry_path(registry, config)
     if not path.is_file():
-        return []
+        return {"state": REGISTRY_ABSENT, "pages": [], "path": str(path), "reason": None}
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        return {
+            "state": REGISTRY_UNREADABLE,
+            "pages": [],
+            "path": str(path),
+            "reason": f"{type(error).__name__}: {error}",
+        }
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        return {
+            "state": REGISTRY_INVALID,
+            "pages": [],
+            "path": str(path),
+            "reason": f"invalid JSON: {error.msg} at line {error.lineno}",
+        }
     if not isinstance(data, dict) or data.get("vault_id") != config.id:
-        return []
+        return {
+            "state": REGISTRY_INVALID,
+            "pages": [],
+            "path": str(path),
+            "reason": "unexpected shape or a different vault_id",
+        }
     pages = data.get("pages")
-    return [row for row in pages if isinstance(row, dict)] if isinstance(pages, list) else []
+    if not isinstance(pages, list) or any(
+        not isinstance(row, dict) or any(key not in row for key in _PAGE_REQUIRED)
+        for row in pages
+    ):
+        return {
+            "state": REGISTRY_INVALID,
+            "pages": [],
+            "path": str(path),
+            "reason": "a page record is missing a required field",
+        }
+    return {"state": REGISTRY_VALID, "pages": list(pages), "path": str(path), "reason": None}
+
+
+def load_pages(registry: VaultRegistry, config: VaultConfig) -> list[dict[str, Any]]:
+    """Read the page registry; a damaged registry never invents pages."""
+    return load_page_registry(registry, config)["pages"]
 
 
 def load_page(registry: VaultRegistry, config: VaultConfig, page_id: str) -> dict[str, Any] | None:
@@ -334,9 +379,15 @@ def _record_page(
     state = registry.vault_state_dir(config)
     with registry.guard_vault_state(config) as guard:
         with FileLock(state / ".knowledge-pages.lock", pinned_parent=guard):
+            existing = load_page_registry(registry, config)
+            if existing["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+                raise RuntimeError(
+                    "Refusing to rewrite an unreadable page registry "
+                    f"({existing['state']}: {existing['reason']}); fix it first"
+                )
             pages = [
                 row
-                for row in load_pages(registry, config)
+                for row in existing["pages"]
                 if row.get("page_id") != record["page_id"]
             ]
             pages.append(record)
@@ -426,6 +477,14 @@ def publish_page(
     version = load_context_version(registry, config)
     if version is None:
         raise ValueError("No registered Context definitions; run contexts register first")
+    # Checked before anything is written: a page file that cannot be registered would be an
+    # untracked artifact, and the next publish would not know its version.
+    registry_state = load_page_registry(registry, config)
+    if registry_state["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+        raise RuntimeError(
+            "Refusing to publish while the page registry is unreadable "
+            f"({registry_state['state']}: {registry_state['reason']}); fix it first"
+        )
     contexts = version["definitions"]["contexts"]
     context = select_context(contexts, selector)
     draft = parse_draft(draft_text, title=title or context["name"])
@@ -459,6 +518,7 @@ def publish_page(
         "title": title or context["name"],
         "context_id": context["id"],
         "context_revision": version["revision"],
+        "context_fingerprint": definition_fingerprint(context),
         "definitions_fingerprint": definitions_fingerprint(contexts),
         "version": int(previous["version"]) + 1 if previous else 1,
         "published_at": datetime.now(UTC).isoformat(),
@@ -532,7 +592,9 @@ def page_status(
             for record in report.records
             if note_in_context(record.path, tags_by_path.get(record.path, ()), context)
         }
-        scope_changed = page.get("definitions_fingerprint") != definitions_fingerprint(contexts)
+        # Only this page's own Context matters: adding an unrelated Context must not make it
+        # look re-scoped.
+        scope_changed = page.get("context_fingerprint") != definition_fingerprint(context)
     # Compare against the *scoped* set, never the whole Vault: an unrelated note elsewhere is not
     # a change to this page's sources.
     added = sorted(set(current) - set(recorded))
@@ -564,7 +626,11 @@ def page_status(
         "drift_count": len(added) + len(removed) + len(changed),
         "citation_drift": citation_drift[:10],
         "citation_drift_count": len(citation_drift),
-        "stale": bool(not exists or added or removed or changed or citation_drift),
+        # A re-scoped Context means the page covers a different source set, so it is stale even
+        # if every recorded file is byte-identical.
+        "stale": bool(
+            not exists or added or removed or changed or citation_drift or scope_changed
+        ),
         "scope_changed": scope_changed,
     }
 
@@ -597,7 +663,27 @@ def context_pack(
     if version is None:
         raise ValueError("No registered Context definitions; run contexts register first")
     context = select_context(version["definitions"]["contexts"], selector)
-    page = load_page(registry, config, context["id"])
+    registry_state = load_page_registry(registry, config)
+    if registry_state["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+        # "No page published" would be a false claim when the registry cannot be read.
+        return {
+            "schema_version": 1,
+            "vault_id": config.id,
+            "context_id": context["id"],
+            "status": "registry_unreadable",
+            "registry_state": registry_state["state"],
+            "registry_reason": registry_state.get("reason"),
+            "budget_tokens": budget_tokens,
+            "used_tokens": 0,
+            "items": [],
+            "meaning": (
+                "The page registry could not be read, so nothing can be said about whether a "
+                "page exists. This is not a claim that nothing is known."
+            ),
+        }
+    page = next(
+        (row for row in registry_state["pages"] if row.get("page_id") == context["id"]), None
+    )
     if page is None:
         return {
             "schema_version": 1,

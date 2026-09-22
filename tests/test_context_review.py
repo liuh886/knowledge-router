@@ -11,7 +11,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from context_compile import write_compiled_card
+from context_compile import (
+    compile_context,
+    scoped_source_dependencies,
+    source_snapshot_sha256,
+    write_compiled_card,
+)
 from context_review import format_review_agenda, review_agenda
 from context_store import register_contexts
 from registry import VaultRegistry
@@ -76,6 +81,12 @@ def _stale_paths(result) -> set[str]:
         for row in result["items"]
         if row.get("kind") == "compiled_card_stale"
     }
+
+
+def _basis_for(config, context=None):
+    """The bundle snapshot a draft must carry back to get a verified basis."""
+    context = context if context is not None else DEFINITIONS["contexts"][0]
+    return source_snapshot_sha256(scoped_source_dependencies(config, context))
 
 
 def test_review_flags_overdue_maintenance_and_records_ledger(vault):
@@ -264,7 +275,7 @@ def test_custom_out_root_card_is_detected_as_stale(tmp_path):
     out_root.mkdir()
     written = write_compiled_card(
         registry, config, "research:area", "# Area\nbody", name="Different.md",
-        out_root=str(out_root),
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
     )
     assert written["registered"] is True
     card = out_root / "Different.md"
@@ -289,7 +300,7 @@ def test_deleted_registered_card_is_reported_not_ignored(tmp_path):
     out_root.mkdir()
     write_compiled_card(
         registry, config, "research:area", "# Area\nbody", name="Gone.md",
-        out_root=str(out_root),
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
     )
     (out_root / "Gone.md").unlink()
 
@@ -305,7 +316,7 @@ def test_rescoping_a_context_marks_its_card_scope_changed(tmp_path):
     out_root.mkdir()
     write_compiled_card(
         registry, config, "research:area", "# Area\nbody", name="Scoped.md",
-        out_root=str(out_root),
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
     )
     moved = json.loads(json.dumps(DEFINITIONS))
     moved["contexts"][0]["scopes"] = ["Out"]
@@ -420,6 +431,190 @@ def test_code_filter_changes_display_only_not_the_ledger(tmp_path):
     assert filtered["display_matched"] == everything["counts_by_code"]["orphan_note"]
     assert all(item["code"] == "orphan_note" for item in filtered["items"])
     assert "筛选只影响显示" in format_review_agenda(filtered)
+
+
+def test_scope_is_decided_over_all_occurrences_not_the_truncated_sample(tmp_path):
+    """A target whose only in-scope source is its 21st occurrence must still be reported.
+
+    Doctor keeps a 20-source display sample per target. Deciding scope membership from that
+    sample silently dropped the target, and an empty agenda over a complete basis then
+    reported `clear`.
+    """
+    root = tmp_path / "vault"
+    (root / "Out").mkdir(parents=True)
+    (root / "ZZ").mkdir()
+    for index in range(1, 21):
+        (root / "Out" / f"a{index:02d}.md").write_text("# Out\n[[Missing]]", encoding="utf-8")
+    (root / "ZZ" / "note.md").write_text("# Note\n[[Missing]]", encoding="utf-8")
+    definitions = {
+        "schema_version": 1,
+        "contexts": [
+            {
+                "id": "research:zz",
+                "type": "research",
+                "name": "ZZ",
+                "purpose": "Scoped",
+                "scopes": ["ZZ"],
+                "aliases": ["ZZ"],
+            }
+        ],
+    }
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="sample")
+    register_contexts(registry, config, definitions)
+
+    result = review_agenda(registry, config, record=False)
+    quality = [item for item in result["items"] if item.get("target") == "Missing"]
+    assert quality, "the in-scope occurrence must not be lost to the display sample"
+    assert quality[0]["occurrences"] == 1
+    assert quality[0]["vault_target_occurrences"] == 21
+    assert "全库同一目标共 21 处" in quality[0]["reason"]
+    assert result["status"] == "attention"
+
+
+def test_unreadable_card_registry_cannot_confirm_resolutions(tmp_path):
+    """A damaged registry must not make a stale card look resolved.
+
+    `load_compiled_cards` used to swallow a JSON error into an empty list, so the card simply
+    vanished from the agenda while the basis still claimed to be complete.
+    """
+    registry, config, root = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Tracked.md",
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
+    )
+    (root / "Area" / "Clean.md").write_text("# Clean\n[[Clean2]] changed", encoding="utf-8")
+
+    first = review_agenda(registry, config)  # records a ledger entry with the stale card
+    assert "compiled_card_stale" in {row.get("code") for row in first["items"]}
+
+    registry_file = registry.vault_state_dir(config) / "compiled_cards.json"
+    registry_file.write_text("{ this is not json", encoding="utf-8")
+    second = review_agenda(registry, config)
+
+    assert second["basis"]["card_registry_state"] == "invalid"
+    assert second["basis"]["complete"] is False
+    assert "card_registry_invalid" in second["basis"]["incomplete_reasons"]
+    # Items exist, so `status` stays attention - but incompleteness must not be hidden by it.
+    assert second["incomplete"] is True
+    assert "⚠ 判定不完整" in format_review_agenda(second)
+    assert second["delta"]["comparable"] is False
+    assert second["delta"]["resolved_item_ids"] == []
+    assert second["delta"]["resolved_suppressed"] >= 1
+    assert "card_registry_unreadable" in {row.get("code") for row in second["items"]}
+
+
+def test_unrelated_context_does_not_mark_a_card_scope_changed(tmp_path):
+    """A card depends on its own Context, not on the whole definition set."""
+    registry, config, root = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Mine.md",
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
+    )
+    assert _stale_paths(review_agenda(registry, config, record=False)) == set()
+
+    (root / "Other").mkdir()
+    (root / "Other" / "Note.md").write_text("# Other\nbody", encoding="utf-8")
+    widened = json.loads(json.dumps(DEFINITIONS))
+    widened["contexts"].append(
+        {
+            "id": "research:other",
+            "type": "research",
+            "name": "Other",
+            "purpose": "Unrelated",
+            "scopes": ["Other"],
+            "aliases": ["Other"],
+        }
+    )
+    register_contexts(registry, config, widened, expected_revision=1)
+
+    result = review_agenda(registry, config, record=False)
+    codes = {row.get("code") for row in result["items"]}
+    assert "compiled_card_scope_changed" not in codes
+    assert "compiled_card_stale" not in codes
+
+
+def test_unverified_basis_is_flagged_not_treated_as_clean(tmp_path):
+    """Saving without the bundle's snapshot must not read as "sources unchanged"."""
+    registry, config, _ = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    written = write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Loose.md",
+        out_root=str(out_root),
+    )
+    assert written["basis"] == "unverified"
+
+    result = review_agenda(registry, config, record=False)
+    codes = {row.get("code") for row in result["items"]}
+    assert "compiled_card_unverified_basis" in codes
+
+
+def test_save_refuses_when_sources_changed_since_the_bundle(tmp_path):
+    """A draft cannot be vouched for by a source state newer than the one it was written from.
+
+    Reproduces the reported case: the source said OLD, the bundle was assembled, the source
+    changed to NEW, and saving the OLD draft used to register NEW as its trusted basis.
+    """
+    registry, config, root = _compiled_vault(tmp_path)
+    note = root / "Area" / "Clean2.md"
+    note.write_text("# Clean2\nOLD decision\n", encoding="utf-8")
+    bundle_basis = _basis_for(config)
+
+    note.write_text("# Clean2\nNEW decision\n", encoding="utf-8")
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    try:
+        write_compiled_card(
+            registry, config, "research:area", "# stale draft\nbased on OLD",
+            name="Stale.md", out_root=str(out_root),
+            expected_source_snapshot=bundle_basis,
+        )
+    except RuntimeError as error:
+        assert "changed since the bundle was assembled" in str(error)
+    else:  # pragma: no cover - the guard must fire
+        raise AssertionError("a stale draft must not be registered as verified")
+    assert not (out_root / "Stale.md").exists()
+
+
+def test_compile_bundle_basis_round_trips_to_a_verified_card(tmp_path):
+    """The bundle exposes the basis that makes a save verifiable."""
+    registry, config, _ = _compiled_vault(tmp_path)
+    bundle = compile_context(registry, config, "research:area")
+    assert bundle["source_snapshot_sha256"]
+    assert bundle["context_fingerprint"]
+
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    written = write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Verified.md",
+        out_root=str(out_root),
+        expected_source_snapshot=bundle["source_snapshot_sha256"],
+    )
+    assert written["basis"] == "verified"
+    assert _stale_paths(review_agenda(registry, config, record=False)) == set()
+
+
+def test_externally_edited_card_is_flagged(tmp_path):
+    """A card changed outside the tool must be re-reviewed, not assumed current."""
+    registry, config, _ = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Edited.md",
+        out_root=str(out_root), expected_source_snapshot=_basis_for(config),
+    )
+    assert _stale_paths(review_agenda(registry, config, record=False)) == set()
+
+    card = out_root / "Edited.md"
+    card.write_text(card.read_text(encoding="utf-8") + "\nhand edit\n", encoding="utf-8")
+    result = review_agenda(registry, config, record=False)
+    codes = {row.get("code") for row in result["items"]}
+    assert "compiled_card_edited_externally" in codes
 
 
 def test_delta_is_incomparable_against_a_pre_fix_ledger_entry(vault):

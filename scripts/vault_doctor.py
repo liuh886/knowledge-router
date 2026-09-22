@@ -8,6 +8,7 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from collections.abc import Callable, Iterable
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -140,12 +141,23 @@ def _daily_or_template(path: str) -> bool:
     )
 
 
-def _group_targets(
-    items: list[dict[str, Any]], *, key: str = "target"
+def group_targets(
+    items: Iterable[dict[str, Any]],
+    *,
+    key: str = "target",
+    include: Callable[[dict[str, Any]], bool] | None = None,
+    sample_limit: int = 20,
 ) -> list[dict[str, Any]]:
-    """Group occurrence rows by target, keeping original totals and hint mix."""
+    """Group occurrence rows by target over the *full* stream.
+
+    A caller that needs a scoped view must filter here, before aggregation. Trimming the
+    source sample first and deciding membership from it silently drops a target whose only
+    in-scope source happens to be, say, the twenty-first occurrence.
+    """
     groups: dict[str, list[dict[str, Any]]] = defaultdict(list)
     for item in items:
+        if include is not None and not include(item):
+            continue
         groups[str(item[key])].append(item)
     rows: list[dict[str, Any]] = []
     for target, entries in sorted(
@@ -155,10 +167,13 @@ def _group_targets(
         for entry in entries:
             hints[str(entry.get("triage_hint", TRIAGE_REVIEW))] += 1
         dominant = sorted(hints.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+        all_sources = sorted({str(entry["source"]) for entry in entries})
         row: dict[str, Any] = {
             "target": target,
             "occurrences": len(entries),
-            "sources": sorted({str(entry["source"]) for entry in entries})[:20],
+            "sources": all_sources[:sample_limit],
+            "source_count": len(all_sources),
+            "sources_truncated": len(all_sources) > sample_limit,
             "triage_hint": dominant,
             "triage_hint_counts": dict(sorted(hints.items())),
         }
@@ -166,12 +181,17 @@ def _group_targets(
             {str(candidate) for entry in entries for candidate in entry.get("candidates", ())}
         )
         if candidates:
-            row["candidates"] = candidates[:20]
-        proximity = sum(1 for entry in entries if entry.get("nearest_unique"))
-        if proximity:
-            row["proximity_unique"] = proximity
+            row["candidates"] = candidates
         rows.append(row)
     return rows
+
+
+def _group_targets(
+    items: list[dict[str, Any]], *, key: str = "target"
+) -> list[dict[str, Any]]:
+    """Group occurrence rows by target, keeping original totals and hint mix."""
+    return group_targets(items, key=key)
+
 
 
 def diagnose_vault(

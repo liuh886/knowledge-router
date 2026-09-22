@@ -209,6 +209,7 @@ def compile_context(
         source_count=brief["source_count"],
     )
     target_path = config.root_path / PurePosixPath(suggested)
+    scoped = scoped_source_dependencies(config, context)
     return {
         "schema_version": 1,
         "vault_id": config.id,
@@ -217,6 +218,12 @@ def compile_context(
         "definition_revision": brief["definition_revision"],
         "source_generation": brief["source_generation"],
         "source_count": brief["source_count"],
+        # The basis this bundle was assembled from. Pass it back with `--save
+        # --expected-source-snapshot` so a draft cannot be vouched for by a later source
+        # state than the one it was written against.
+        "source_snapshot_sha256": source_snapshot_sha256(scoped),
+        "context_fingerprint": definition_fingerprint(context),
+        "scoped_source_count": len(scoped),
         "query": effective_query,
         "recorded_state": brief["recorded_state"],
         "open_followups": followups,
@@ -347,27 +354,40 @@ def _render_card(context: dict[str, Any], content: str, title: str) -> str:
 
 
 def definitions_fingerprint(contexts: list[dict[str, Any]]) -> str:
-    """Fingerprint what a Context definition observes, so drift is detectable.
+    """Fingerprint what a *set* of Context definitions observes, so drift is detectable.
 
-    Lives here rather than in review because cards record it too: a card whose Context
-    was re-scoped is no longer trustworthy even if every source file is byte-identical.
+    Used for a whole-vault comparison basis. A single derived artifact should use
+    `definition_fingerprint` for its own Context instead: adding an unrelated Context must not
+    make an existing card look like it changed.
     """
     material = [
-        {
-            "id": row.get("id"),
-            "type": row.get("type"),
-            "scopes": sorted(row.get("scopes") or ()),
-            "aliases": sorted(row.get("aliases") or ()),
-            "include": sorted(row.get("include") or ()),
-            "exclude": sorted(row.get("exclude") or ()),
-            "tags": sorted(row.get("tags") or ()),
-            "project_ids": sorted(str(item) for item in (row.get("project_ids") or ())),
-            "maintenance": row.get("maintenance") or {},
-        }
+        _fingerprint_material(row)
         for row in sorted(contexts, key=lambda item: str(item.get("id")))
     ]
     payload = json.dumps(material, ensure_ascii=False, sort_keys=True)
     return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def definition_fingerprint(context: dict[str, Any]) -> str:
+    """Fingerprint one Context definition, for artifacts derived from that Context."""
+    payload = json.dumps(_fingerprint_material(context), ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def _fingerprint_material(row: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row.get("id"),
+        "type": row.get("type"),
+        "name": row.get("name"),
+        "purpose": row.get("purpose"),
+        "scopes": sorted(row.get("scopes") or ()),
+        "aliases": sorted(row.get("aliases") or ()),
+        "include": sorted(row.get("include") or ()),
+        "exclude": sorted(row.get("exclude") or ()),
+        "tags": sorted(row.get("tags") or ()),
+        "project_ids": sorted(str(item) for item in (row.get("project_ids") or ())),
+        "maintenance": row.get("maintenance") or {},
+    }
 
 
 def scoped_source_dependencies(
@@ -382,25 +402,76 @@ def scoped_source_dependencies(
     }
 
 
+def source_snapshot_sha256(dependencies: dict[str, str]) -> str:
+    """Stable hash of a ``{path: checksum}`` snapshot, for carrying a basis across steps."""
+    payload = json.dumps(dependencies, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
 def _registry_path(registry: VaultRegistry, config: VaultConfig) -> Path:
     return registry.vault_state_dir(config) / _CARD_REGISTRY
+
+
+REGISTRY_ABSENT = "absent"
+REGISTRY_VALID = "valid"
+REGISTRY_UNREADABLE = "unreadable"
+REGISTRY_INVALID = "invalid"
+_CARD_REQUIRED = ("context_id", "path")
+
+
+def load_card_registry(registry: VaultRegistry, config: VaultConfig) -> dict[str, Any]:
+    """Read the card registry, reporting *why* it is empty instead of just being empty.
+
+    "No cards registered" and "the registry could not be read" are very different claims. The
+    second one must never make a stale card look resolved, so the state is part of the answer.
+    """
+    path = _registry_path(registry, config)
+    if not path.is_file():
+        return {"state": REGISTRY_ABSENT, "cards": [], "path": str(path), "reason": None}
+    try:
+        raw = path.read_text(encoding="utf-8")
+    except OSError as error:
+        return {
+            "state": REGISTRY_UNREADABLE,
+            "cards": [],
+            "path": str(path),
+            "reason": f"{type(error).__name__}: {error}",
+        }
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as error:
+        return {
+            "state": REGISTRY_INVALID,
+            "cards": [],
+            "path": str(path),
+            "reason": f"invalid JSON: {error.msg} at line {error.lineno}",
+        }
+    if not isinstance(data, dict) or data.get("vault_id") != config.id:
+        return {
+            "state": REGISTRY_INVALID,
+            "cards": [],
+            "path": str(path),
+            "reason": "unexpected shape or a different vault_id",
+        }
+    cards = data.get("cards")
+    if not isinstance(cards, list) or any(
+        not isinstance(row, dict) or any(key not in row for key in _CARD_REQUIRED)
+        for row in cards
+    ):
+        return {
+            "state": REGISTRY_INVALID,
+            "cards": [],
+            "path": str(path),
+            "reason": "a card record is missing context_id or path",
+        }
+    return {"state": REGISTRY_VALID, "cards": list(cards), "path": str(path), "reason": None}
 
 
 def load_compiled_cards(
     registry: VaultRegistry, config: VaultConfig
 ) -> list[dict[str, Any]]:
     """Read the external card registry; a damaged registry never invents entries."""
-    path = _registry_path(registry, config)
-    if not path.is_file():
-        return []
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
-        return []
-    if not isinstance(data, dict) or data.get("vault_id") != config.id:
-        return []
-    cards = data.get("cards")
-    return [row for row in cards if isinstance(row, dict)] if isinstance(cards, list) else []
+    return load_card_registry(registry, config)["cards"]
 
 
 def record_compiled_card(
@@ -410,9 +481,15 @@ def record_compiled_card(
     state = registry.vault_state_dir(config)
     with registry.guard_vault_state(config) as guard:
         with FileLock(state / ".compiled-cards.lock", pinned_parent=guard):
+            existing = load_card_registry(registry, config)
+            if existing["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+                raise RuntimeError(
+                    "Refusing to rewrite an unreadable card registry "
+                    f"({existing['state']}: {existing['reason']}); fix it first"
+                )
             cards = [
                 row
-                for row in load_compiled_cards(registry, config)
+                for row in existing["cards"]
                 if not (
                     row.get("context_id") == record["context_id"]
                     and row.get("path") == record["path"]
@@ -440,13 +517,28 @@ def write_compiled_card(
     out_root: str | None = None,
     overwrite: bool = False,
     title: str | None = None,
+    expected_source_snapshot: str | None = None,
 ) -> dict[str, Any]:
-    """Write one compiled card into the external compiled area (never the Vault)."""
+    """Write one compiled card into the external compiled area (never the Vault).
+
+    `expected_source_snapshot` is the `source_snapshot_sha256` of the bundle the draft was
+    written against. When supplied, it is verified against the current scoped sources before
+    anything is written, so a draft cannot be vouched for by a *later* source state than the
+    one it was authored from. When omitted, the card is recorded with `basis: unverified`:
+    the source state is stored, but it is not claimed to be the authoring basis.
+    """
     if not content.strip():
         raise ValueError("Compiled card content cannot be empty")
     version = load_context_version(registry, config)
     if version is None:
         raise ValueError("No registered Context definitions; run contexts register first")
+    # Checked before writing: a card file that cannot be registered would be untracked.
+    registry_state = load_card_registry(registry, config)
+    if registry_state["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+        raise RuntimeError(
+            "Refusing to write while the card registry is unreadable "
+            f"({registry_state['state']}: {registry_state['reason']}); fix it first"
+        )
     context = select_context(version["definitions"]["contexts"], selector)
     root = compiled_root(config, out_root)
     filename = name or f"{_slug(context['name'])}.md"
@@ -464,8 +556,19 @@ def write_compiled_card(
         )
     card_title = title or context["name"]
     body = _render_card(context, content, card_title)
-    atomic_text_write(target, body)
     dependencies = scoped_source_dependencies(config, context)
+    current_snapshot = source_snapshot_sha256(dependencies)
+    if expected_source_snapshot is None:
+        basis = "unverified"
+    elif expected_source_snapshot != current_snapshot:
+        raise RuntimeError(
+            "Scoped sources changed since the bundle was assembled "
+            f"(expected {expected_source_snapshot}, found {current_snapshot}); "
+            "re-run compile and re-check the draft against the new sources"
+        )
+    else:
+        basis = "verified"
+    atomic_text_write(target, body)
     record = {
         "context_id": context["id"],
         "context_name": context["name"],
@@ -474,10 +577,13 @@ def write_compiled_card(
         "compiled_area": str(root),
         "written_at": datetime.now(UTC).isoformat(),
         "card_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "context_fingerprint": definition_fingerprint(context),
         "definitions_fingerprint": definitions_fingerprint(
             version["definitions"]["contexts"]
         ),
         "source_dependencies": dependencies,
+        "source_snapshot_sha256": current_snapshot,
+        "basis": basis,
         "source_count": len(dependencies),
     }
     record_compiled_card(registry, config, record)
@@ -491,12 +597,21 @@ def write_compiled_card(
         "replaced": existed,
         "card_sha256": record["card_sha256"],
         "source_count": record["source_count"],
+        "source_snapshot_sha256": current_snapshot,
+        "basis": basis,
         "registered": True,
         "vault_writes": 0,
         "meaning": (
-            "Written outside the Vault; no Vault authorization is involved. Its output path "
-            "and source dependencies are recorded in external state, so review can detect "
-            "staleness for custom --out-root/--name locations too."
+            "Written outside the Vault; no Vault authorization is involved. Its output path, "
+            "source dependencies and authoring basis are recorded in external state, so review "
+            "can detect staleness for custom --out-root/--name locations."
+            + (
+                ""
+                if basis == "verified"
+                else " The basis is UNVERIFIED: this draft was saved without the bundle's"
+                " source snapshot, so the recorded sources are not claimed to be the ones it"
+                " was written against."
+            )
         ),
     }
 
@@ -508,6 +623,10 @@ def format_compile_bundle(bundle: dict[str, Any]) -> str:
         f"# 编译包：{context['name']} ({context['id']})",
         f"来源 {bundle['source_count']} 条 · 证据 {len(bundle['key_evidence'])} 条 · "
         f"锚点 {len(bundle['anchors'])} 个 · 待决 {len(bundle['open_followups'])} 项",
+        f"依据快照：{bundle['source_snapshot_sha256']}",
+        "保存草稿时把它一并交回，来源变化会被拒绝；不交回则登记为 unverified basis：",
+        f"  contexts compile {context['id']} --save --content-file <draft> "
+        f"--expected-source-snapshot {bundle['source_snapshot_sha256']}",
     ]
     if bundle.get("suggested_output"):
         lines.append(

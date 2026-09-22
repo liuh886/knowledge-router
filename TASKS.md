@@ -99,7 +99,7 @@ from host-specific activation gates.
       recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
       version is part of the generation hash, so changing the layout rebuilds instead of
       silently reusing a stale index.
-- [x] `tests/` suite: **256 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **271 tests**, ruff- and bytecode-clean.
 
 ## Correctness closeout (P0 of the roadmap review)
 
@@ -157,6 +157,36 @@ Stated limits: no conflict claim was published on the real Vault because no veri
 between two sources was found, so that path is covered by tests only; the token budget is an estimate,
 not a tokenizer; re-scoping marks a page `scope_changed` but never rewrites it or decides which claims
 survive.
+
+## Tightening the derived-artifact contracts
+
+A second review of the same batch reproduced six defects in these mechanisms. All six are fixed, each
+with a regression test.
+
+- [x] **A card was vouched for by the wrong source state.** `write_compiled_card` recorded the scoped
+      checksums *after* writing the prose, so a draft authored against OLD was registered against NEW
+      and review said `clear`. `compile` now returns a `source_snapshot_sha256`, and
+      `--save --expected-source-snapshot <hash>` verifies it before writing; a mismatch is refused.
+      Omitting it records `basis: unverified`, surfaced as `compiled_card_unverified_basis` — such a
+      card never gets the meaning "sources unchanged". The recorded `card_sha256` is checked on read,
+      so an external edit becomes `compiled_card_edited_externally`.
+- [x] **A damaged registry made stale items look resolved.** Reading now returns
+      `absent / valid / unreadable / invalid` with a reason; the state is in the review basis and in
+      the agenda as `card_registry_unreadable`, makes the basis incomplete, blocks `resolved` and exits
+      2. The write path refuses to rebuild a damaged registry as empty, and the registry is checked
+      *before* any file is written so an unregistered artifact cannot be left behind. Same for pages.
+- [x] **Scope was decided from a truncated display sample.** Scope is now decided over the full
+      occurrence stream before aggregation; per-scope counts and `counts_by_hint` come from in-scope
+      occurrences only, with the vault-wide total reported separately as `vault_target_occurrences`.
+- [x] **An unrelated Context marked a card re-scoped.** Cards and pages record and compare a
+      per-Context `context_fingerprint`; a record predating it is reported as needing re-verification.
+- [x] **No definitions looked like a complete empty result.** `converge` reports `configured: false`,
+      marks the result incomplete and exits 2; an unknown `--context` is an error.
+- [x] **A successful create is not a fixed link.** `stage_missing_note` re-resolves the planned path
+      with the shared resolver, lists the occurrences it would fix, and refuses a create that would
+      resolve nothing.
+- [x] `status` no longer masks an incomplete basis when items exist: incompleteness is a top-level
+      `incomplete` field and the warning is printed whenever it is set.
 
 ## Open
 

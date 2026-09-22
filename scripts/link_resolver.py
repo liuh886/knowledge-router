@@ -246,6 +246,23 @@ class LinkResolver:
             assets=frozenset(asset_paths),
         )
 
+    def with_planned_note(self, path: str) -> LinkResolver:
+        """A copy that also knows about a note which does not exist yet.
+
+        Answers "would creating this path actually resolve anything?" *before* a create is
+        staged. A successful write is not evidence that a link was fixed: the broker may place
+        the file at a path no link points at.
+        """
+        planned = LinkResolver(
+            matching=dict(self.matching),
+            by_short={key: set(value) for key, value in self.by_short.items()},
+            by_alias={key: set(value) for key, value in self.by_alias.items()},
+            assets=self.assets,
+        )
+        planned.matching[path.removesuffix(".md").casefold()] = path
+        planned.by_short.setdefault(_short_key(path), set()).add(path)
+        return planned
+
     @classmethod
     def from_scan(cls, scan, *, vault_root: Path | None = None) -> LinkResolver:
         """Build a resolver from a scan, optionally including non-Markdown assets."""

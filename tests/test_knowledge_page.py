@@ -274,6 +274,78 @@ def test_expand_refuses_an_unknown_claim(vault):
         expand_claim(registry, config, "research:ccs", "C9")
 
 
+def test_unreadable_page_registry_is_not_reported_as_unpublished(tmp_path):
+    """"No page" and "cannot read the registry" are different claims."""
+    registry, config, _ = tmp_path, None, None
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Concept.md").write_text("# C\nbody\n", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="pages")
+    register_contexts(registry, config, DEFINITIONS)
+    publish_page(registry, config, "research:ccs", "## 当前认识\n- C1. X [inference]\n")
+
+    (registry.vault_state_dir(config) / "knowledge_pages.json").write_text(
+        "{ broken", encoding="utf-8"
+    )
+    pack = context_pack(registry, config, "research:ccs")
+    assert pack["status"] == "registry_unreadable"
+    assert pack["registry_state"] == "invalid"
+    assert pack["items"] == []
+    assert "not a claim that nothing is known" in pack["meaning"]
+
+    with pytest.raises(RuntimeError, match="page registry is unreadable"):
+        publish_page(registry, config, "research:ccs", "## 当前认识\n- C1. Y [inference]\n")
+
+
+def test_record_without_a_context_fingerprint_is_flagged_for_reverification(tmp_path):
+    """A record predating per-Context fingerprints must be re-verified, not assumed current."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Concept.md").write_text("# C\nbody\n", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="pages")
+    register_contexts(registry, config, DEFINITIONS)
+    publish_page(registry, config, "research:ccs", "## 当前认识\n- C1. X [inference]\n")
+
+    registry_file = registry.vault_state_dir(config) / "knowledge_pages.json"
+    data = json.loads(registry_file.read_text(encoding="utf-8"))
+    data["pages"][0].pop("context_fingerprint")
+    registry_file.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    status = page_status(registry, config, load_page(registry, config, "research:ccs"))
+    assert status["scope_changed"] is True
+    assert status["stale"] is True
+
+
+def test_unrelated_context_does_not_stale_a_page(tmp_path):
+    """A page depends on its own Context, not on the whole definition set."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Other").mkdir()
+    (root / "Area" / "Concept.md").write_text("# C\nbody\n", encoding="utf-8")
+    (root / "Other" / "Note.md").write_text("# O\nbody\n", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="pages")
+    register_contexts(registry, config, DEFINITIONS)
+    publish_page(registry, config, "research:ccs", "## 当前认识\n- C1. X [inference]\n")
+    assert context_pack(registry, config, "research:ccs")["status"] == "current"
+
+    widened = json.loads(json.dumps(DEFINITIONS))
+    widened["contexts"].append(
+        {
+            "id": "research:other",
+            "type": "research",
+            "name": "Other",
+            "purpose": "Unrelated",
+            "scopes": ["Other"],
+            "aliases": ["Other"],
+        }
+    )
+    register_contexts(registry, config, widened, expected_revision=1)
+    assert context_pack(registry, config, "research:ccs")["status"] == "current"
+
+
 def test_estimate_tokens_over_estimates_rather_than_under():
     assert estimate_tokens("") == 0
     assert estimate_tokens("abcd") == 1

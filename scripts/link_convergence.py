@@ -20,8 +20,16 @@ from typing import Any
 
 from context_manager import extract_tags, note_in_context
 from capture_broker import create_capture_plan
+from fts_indexer import scan_notes
+from link_resolver import (
+    STATUS_AMBIGUOUS,
+    STATUS_RESOLVED,
+    STATUS_UNRESOLVED,
+    LinkResolver,
+    extract_links,
+)
 from registry import VaultConfig, VaultRegistry
-from vault_doctor import NOISY_HINTS, diagnose_vault
+from vault_doctor import NOISY_HINTS, diagnose_vault, group_targets
 
 RECOMMEND_NAMING_VARIANT = "check_naming_variant"
 RECOMMEND_CREATE_OR_RELINK = "create_or_relink"
@@ -100,6 +108,7 @@ class ConvergenceReport:
     scope: str
     excluded_noisy_targets: int
     excluded_noisy_occurrences: int
+    configured: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         by_recommendation: dict[str, int] = {}
@@ -108,6 +117,7 @@ class ConvergenceReport:
                 by_recommendation.get(item.recommended, 0) + 1
             )
         return {
+            "configured": self.configured,
             "target_count": len(self.items),
             "occurrences_total": sum(item.occurrences for item in self.items),
             "counts_by_recommendation": by_recommendation,
@@ -137,7 +147,10 @@ def converge_targets(
     never hides that they exist.
     """
     if not contexts:
-        return ConvergenceReport((), context_id or "*", 0, 0)
+        # Nothing is registered, so "no targets" would be a claim about a check that never ran.
+        return ConvergenceReport((), context_id or "*", 0, 0, configured=False)
+    if context_id and not any(str(row.get("id")) == context_id for row in contexts):
+        raise ValueError(f"No registered Context with id {context_id!r}")
     if min_occurrences < 1:
         raise ValueError("min_occurrences must be at least 1")
 
@@ -145,33 +158,68 @@ def converge_targets(
     tags_by_path = {record.path: extract_tags(record.content) for record in scan.records}
     index = _note_index(scan)
 
+    def in_scope(row: dict[str, Any]) -> bool:
+        path = str(row.get("source", ""))
+        return any(
+            note_in_context(path, tags_by_path.get(path, ()), definition)
+            for definition in contexts
+        )
+
+    # Filter the FULL occurrence stream first. Deciding from the truncated sample would drop
+    # a target whose only in-scope source is, say, its twenty-first occurrence, and would let
+    # an out-of-scope majority decide the hint this scope is judged by.
+    occurrences = doctor.get("broken_links", [])
+    scoped_groups = group_targets(occurrences, include=in_scope)
+    vault_totals = {
+        str(row["target"]): int(row["occurrences"])
+        for row in doctor.get("broken_targets", [])
+    }
+
     grouped: dict[str, dict[str, Any]] = {}
     excluded: dict[str, int] = {"targets": 0, "occurrences": 0}
-    for entry in doctor.get("broken_targets", []):
+    if not include_noisy:
+        noisy = group_targets(
+            occurrences,
+            include=lambda row: in_scope(row) and row.get("triage_hint") in NOISY_HINTS,
+        )
+        excluded = {
+            "targets": len(noisy),
+            "occurrences": sum(int(row["occurrences"]) for row in noisy),
+        }
+
+    for entry in scoped_groups:
         target = str(entry["target"])
-        occurrences = int(entry["occurrences"])
-        if not include_noisy and entry.get("triage_hint") in NOISY_HINTS:
-            excluded["targets"] += 1
-            excluded["occurrences"] += occurrences
+        hint = entry.get("triage_hint")
+        if not include_noisy and hint in NOISY_HINTS:
             continue
         sources = [str(item) for item in entry.get("sources", [])]
-        ids = sorted({cid for path in sources for cid in _scope_ids(path, contexts, tags_by_path)})
-        if not ids or (context_id and context_id not in ids):
+        ids = sorted(
+            {
+                cid
+                for source in sources
+                for cid in _scope_ids(source, contexts, tags_by_path)
+                if not context_id or cid == context_id
+            }
+        )
+        if not ids:
             continue
-        key = target.casefold()
+        count = int(entry["occurrences"])
+        # `CCS` and `ccs` are one missing note, so spellings accumulate under one key.
         row = grouped.setdefault(
-            key,
+            target.casefold(),
             {
                 "occurrences": 0,
                 "spellings": Counter(),
                 "sources": [],
                 "hints": Counter(),
                 "context_ids": set(),
+                "vault_occurrences": 0,
             },
         )
-        row["occurrences"] += occurrences
-        row["spellings"][target] += occurrences
-        row["hints"][entry.get("triage_hint")] += occurrences
+        row["occurrences"] += count
+        row["spellings"][target] += count
+        row["hints"][hint] += count
+        row["vault_occurrences"] += vault_totals.get(target, count)
         for path in sources:
             if path not in row["sources"] and len(row["sources"]) < _SAMPLE_SOURCES:
                 row["sources"].append(path)
@@ -249,6 +297,9 @@ def _suggest(
 def format_convergence(report: ConvergenceReport) -> str:
     """Render the convergence list for a human reader."""
     lines = [f"# 链接收敛（scope: {report.scope}）", f"待决目标 {len(report.items)} 个"]
+    if not report.configured:
+        lines.append("⚠ 没有已登记的 Context：本次没有可收敛的范围，结论不成立")
+        return "\n".join(lines)
     if report.excluded_noisy_targets:
         lines.append(
             f"（已排除机器生成噪声 {report.excluded_noisy_targets} 个目标 / "
@@ -295,15 +346,18 @@ def stage_missing_note(
     content: str | None = None,
     title: str | None = None,
     idempotency_key: str | None = None,
+    scan=None,
 ) -> dict[str, Any]:
     """Stage a broker plan that creates the note an unresolved link points at.
 
     Preview only: the returned plan must be committed through the ordinary capture path
     (`capture --plan-id <id> --commit`), which is still gated by the Vault's write policy.
 
-    Refuses when the requested path already exists. The broker would otherwise pick a
-    unique sibling name, the new note would not be at the linked path, and the links would
-    stay broken - a silent non-fix that looks like success.
+    Before staging, the planned path is re-resolved with the shared resolver to check that it
+    would actually resolve the unresolved occurrences of `target`. A create that resolves
+    nothing is refused: the write would succeed, the link would stay broken, and the result
+    would look like a fix. The same check refuses a path that already exists, because the
+    broker would then pick a unique sibling name and the links would still not resolve.
     """
     relative = PurePosixPath(str(target_path).replace("\\", "/")).as_posix()
     if not relative or relative.startswith("/") or relative.startswith("../"):
@@ -316,6 +370,32 @@ def stage_missing_note(
     if destination.exists():
         raise FileExistsError(
             f"{relative} already exists; creating a sibling would not resolve '{target}'"
+        )
+
+    report = scan or scan_notes(config.root_path)
+    resolver = LinkResolver.from_scan(report, vault_root=config.root_path)
+    planned = resolver.with_planned_note(relative)
+    resolved_samples: list[str] = []
+    still_broken = 0
+    becomes_ambiguous = 0
+    for record in report.records:
+        for reference in extract_links(record.path, record.content):
+            if resolver.resolve(reference).status != STATUS_UNRESOLVED:
+                continue
+            decision = planned.resolve(reference)
+            if decision.status == STATUS_RESOLVED:
+                if len(resolved_samples) < 10:
+                    resolved_samples.append(
+                        f"{record.path}:{reference.line} [[{reference.target}]]"
+                    )
+            elif decision.status == STATUS_AMBIGUOUS:
+                becomes_ambiguous += 1
+            else:
+                still_broken += 1
+    if not resolved_samples and still_broken:
+        raise ValueError(
+            f"Creating {relative} would not make any unresolved link resolve "
+            f"({still_broken} would stay unresolved). Choose the path the links actually point at."
         )
 
     routing = _StubRouting(
@@ -351,10 +431,16 @@ def stage_missing_note(
         "action": plan.action,
         "relative_path": plan.relative_path,
         "write_policy": config.write_policy,
+        "resolved_occurrence_samples": resolved_samples,
+        "resolved_occurrence_count": len(resolved_samples),
+        "still_unresolved_after_create": still_broken,
+        "would_become_ambiguous": becomes_ambiguous,
         "vault_writes": 0,
         "next_step": f"capture --vault {config.name} --plan-id {plan.plan_id} --commit",
         "meaning": (
-            "A frozen capture plan, nothing written. Committing an append-create plan is a "
-            "separate explicit step and still requires the Vault's write policy to allow it."
+            "A frozen capture plan, nothing written. The planned path was re-resolved with the "
+            "shared resolver, so the occurrences it would fix are listed before anything is "
+            "committed. Committing is a separate explicit step and still requires the Vault's "
+            "write policy to allow it."
         ),
     }

@@ -251,3 +251,59 @@ what a Context's sources support, not a guarantee that its claims are true.
 
 Suite: **256 tests**, ruff clean.
 
+## 2026-09-22 — tightening the derived-artifact contracts
+
+A second review of this work (HEAD `ce3e956`) reproduced six defects in the mechanisms added the same
+day. All six were re-verified and fixed; each has a regression test.
+
+**A card was vouched for by the wrong source state.** `write_compiled_card` wrote the prose and *then*
+recorded the scoped checksums, so a draft authored when a source said OLD was registered against NEW:
+review reported `clear`. `compile` now returns a `source_snapshot_sha256`, and
+`--save --expected-source-snapshot <hash>` verifies it before anything is written — a mismatch is
+refused rather than silently registered. Omitting it is allowed, but the card is then recorded as
+`basis: unverified`, reported as `compiled_card_unverified_basis`, and "sources unchanged" carries no
+trustworthy meaning for it. The recorded `card_sha256` is also checked on read, so a card edited
+outside the tool becomes `compiled_card_edited_externally` instead of passing as the original.
+
+**A damaged registry made stale items look resolved.** `load_compiled_cards` swallowed a JSON error
+into an empty list, and the review basis did not include registry readability, so a card simply
+vanished and its disappearance was reported as a resolution. Reading now returns
+`absent / valid / unreadable / invalid` with a reason; the state is part of the basis and of the
+agenda as `card_registry_unreadable`; an unreadable state makes the basis incomplete, blocks
+`resolved`, and exits 2. The write path refuses to rebuild a damaged registry as an empty list, and
+the registry is now checked *before* any file is written, so an unregistered artifact cannot be left
+behind. The same treatment was applied to the page registry.
+
+**Scope was decided from a truncated display sample.** Doctor keeps a 20-source sample per target and
+review/convergence used it to decide which Context a target belongs to, so a target whose only
+in-scope source was its twenty-first occurrence disappeared entirely, and an out-of-scope majority
+could decide the hint a scope was judged by. Scope is now decided over the full occurrence stream,
+before aggregation; per-scope counts and `counts_by_hint` are computed from in-scope occurrences
+only, and the vault-wide total is reported separately as `vault_target_occurrences`. On the reference
+Vault this changed three targets' in-scope counts (CCS 262→261, MRV 58→57, ESG30 14→11) and moved the
+`needs_review` total 146→143, because ambiguous items no longer borrow the `needs_review` default.
+The noise figure became more accurate too: it now counts individual in-scope noisy occurrences
+(5582) rather than occurrences of noise-dominant targets (5534).
+
+**An unrelated Context marked a card re-scoped.** The fingerprint was the whole definition set, so
+adding any Context flagged every existing card. Cards and pages now record and compare a per-Context
+`context_fingerprint`; a record predating it is reported as needing re-verification rather than being
+misread as a scope change.
+
+**No definitions looked like a complete empty result.** `converge` with nothing registered returned
+zero targets and exit 0. It now reports `configured: false`, marks the result incomplete and exits 2,
+and an unknown `--context` is an error instead of an empty answer.
+
+**A successful create is not a fixed link.** `stage_missing_note` only verified that the broker had not
+renamed the file, so `[[Missing]]` staged as `Area/Different.md` committed successfully and left the
+link broken. The planned path is now re-resolved with the shared resolver before staging: the
+occurrences it would fix are listed, and a create that would resolve nothing is refused.
+
+Also fixed: `status` no longer masks an incomplete basis when items exist. Incompleteness is a
+top-level `incomplete` field and the warning is printed whenever it is set, not only when the agenda
+is empty.
+
+Suite: **271 tests**, ruff clean. Unchanged limits: the card registry can only cover cards written
+after it existed; an unverified-basis card is flagged rather than retro-fixed; and the token budget
+remains an estimate.
+

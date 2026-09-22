@@ -357,6 +357,13 @@ def _parser() -> argparse.ArgumentParser:
     compile_parser.add_argument("--stage", action="store_true")
     compile_parser.add_argument("--save", action="store_true")
     compile_parser.add_argument("--content-file", type=Path)
+    compile_parser.add_argument(
+        "--expected-source-snapshot",
+        help=(
+            "The bundle's source_snapshot_sha256 the draft was written against. "
+            "Verified before writing; without it the card is recorded as unverified basis."
+        ),
+    )
     compile_parser.add_argument("--target")
     compile_parser.add_argument("--out-root")
     compile_parser.add_argument("--name")
@@ -826,13 +833,20 @@ def main() -> int:
                         out_root=args.out_root,
                         overwrite=args.overwrite,
                         title=args.title,
+                        expected_source_snapshot=args.expected_source_snapshot,
                     )
                     _emit(
                         written,
                         json_output=args.json,
                         message=(
                             f"已写入外部编译区（未碰 Vault）：{written['path']}\n"
-                            f"编译区：{written['compiled_area']}"
+                            f"编译区：{written['compiled_area']}\n"
+                            f"依据：{written['basis']}"
+                            + (
+                                ""
+                                if written["basis"] == "verified"
+                                else "（未提供编译包来源快照，登记的是保存时刻来源）"
+                            )
                         ),
                     )
                     return 0
@@ -932,7 +946,9 @@ def main() -> int:
                     include_noisy=args.include_noisy,
                 )
                 summary = report.to_dict()
-                scan_incomplete = bool(scan.skipped_decode or scan.skipped_io)
+                scan_incomplete = (
+                    bool(scan.skipped_decode or scan.skipped_io) or not report.configured
+                )
                 result = {
                     "schema_version": 1,
                     "vault_id": config.id,

@@ -126,8 +126,17 @@ production state into an arbitrary location or another Vault.
   Every save records its real output path, the Context definitions fingerprint and the exact
   `{source path: checksum}` set it was built from, so review can later report it as
   `compiled_card_stale` (sources added, removed or edited), `compiled_card_scope_changed` (the
-  Context was re-scoped) or `compiled_card_missing` — for custom `--out-root`/`--name` locations too.
+  Context was re-scoped), or `compiled_card_missing` — for custom `--out-root`/`--name` locations too.
   Cards written before this record existed keep a default-path modification-time fallback.
+  Always pass `--expected-source-snapshot <bundle.source_snapshot_sha256>` from the compile bundle the
+  draft was written against: it is verified before anything is written, so a draft cannot be vouched
+  for by a *later* source state than the one it was authored from (a mismatch is refused and you must
+  re-compile). Omitting it records `basis: unverified`, reported as `compiled_card_unverified_basis`;
+  such a card never claims "sources unchanged". A card edited outside the tool becomes
+  `compiled_card_edited_externally`. An unrelated new Context does not count as a re-scope: a card is
+  compared against its own Context fingerprint. If the registry itself cannot be read, review reports
+  `card_registry_unreadable`, marks the basis incomplete, refuses to call anything resolved, and
+  exits 2 — "no cards registered" and "the registry could not be read" are different claims.
 - To write inside the Vault instead, use `--stage --content-file <path> --target <relative.md>`;
   the directory must already exist (no directory is created) and the copy is written only by
   `capture --commit --plan-id <id>` under an explicit `append-create` policy.
@@ -152,13 +161,18 @@ production state into an arbitrary location or another Vault.
   default but counted (`excluded_noisy_*`), and each target carries its evidence plus a suggestion:
   `check_naming_variant` when a unique same-name variant exists, `create_or_relink` when nothing
   resembles it, `needs_judgement` when the name is too generic to guess. Suggestions are evidence,
-  not verdicts.
+  not verdicts. Scope and hint are decided over the full occurrence stream, not a truncated sample;
+  per-scope counts come from in-scope occurrences and the vault-wide total is reported separately
+  (`vault_target_occurrences`). With no registered Context it reports `configured: false` and exits 2
+  instead of a clean empty result, and an unknown `--context` is an error.
 - Stage a create for one unresolved target with
   `contexts converge --create "<target>" --target-path <relative.md>`; this freezes a normal
   capture plan and writes nothing. Land it with `capture --plan-id <id> --commit` under
-  `append-create`. Staging refuses a path that already exists, because a unique-sibling rename
-  would leave the link broken while appearing to succeed. Alias edits are not expressible under
-  `append-create`.
+  `append-create`. The planned path is re-resolved with the shared resolver before staging: the
+  occurrences it would fix are listed (`resolved_occurrence_samples`, `still_unresolved_after_create`)
+  and a create that would resolve nothing is refused, because a successful write is not evidence that
+  a link was fixed. A path that already exists is refused for the same reason. Alias edits are not
+  expressible under `append-create`.
 - Drop redundant per-revision binding snapshots from external state with `contexts compact
   --vault <name>`; historical definitions are preserved and the Vault is untouched.
 - Publish a versioned **knowledge page** (what a Context currently supports) with

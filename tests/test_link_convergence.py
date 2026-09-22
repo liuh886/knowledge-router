@@ -128,6 +128,99 @@ def test_machine_noise_is_excluded_but_counted(tmp_path):
     assert noisy.excluded_noisy_targets == 0
 
 
+def test_target_with_only_a_late_in_scope_source_is_still_proposed(tmp_path):
+    """Scope is decided over every occurrence, not doctor's 20-source display sample."""
+    root = tmp_path / "vault"
+    (root / "Out").mkdir(parents=True)
+    (root / "ZZ").mkdir()
+    for index in range(1, 21):
+        (root / "Out" / f"a{index:02d}.md").write_text("# Out\n[[Missing]]", encoding="utf-8")
+    (root / "ZZ" / "note.md").write_text("# Note\n[[Missing]]", encoding="utf-8")
+    definitions = [
+        {
+            "id": "research:zz",
+            "type": "research",
+            "name": "ZZ",
+            "purpose": "Scoped",
+            "scopes": ["ZZ"],
+            "aliases": ["ZZ"],
+        }
+    ]
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="late")
+    register_contexts(
+        registry, config, {"schema_version": 1, "contexts": definitions}
+    )
+
+    report = converge_targets(config, definitions, scan_notes(config.root_path))
+    assert [item.target for item in report.items] == ["Missing"]
+    item = report.items[0]
+    assert item.occurrences == 1, "only the in-scope occurrence is the scope's business"
+    assert item.context_ids == ("research:zz",)
+
+
+def test_stage_refuses_a_path_that_would_not_resolve_the_links(tmp_path):
+    """A create at an unrelated path succeeds for the broker but fixes no link.
+
+    Reproduces the reported case: `[[Missing]]` staged as `Area/Different.md`. The old check
+    only confirmed the broker had not renamed the file, so this looked like a fix.
+    """
+    registry, config, root = _vault(
+        tmp_path, {"Area/S.md": "# S\n[[Ghost]]"}, write_policy="append-create"
+    )
+    try:
+        stage_missing_note(registry, config, "Ghost", "Area/Different.md")
+    except ValueError as error:
+        assert "would not make any unresolved link resolve" in str(error)
+    else:  # pragma: no cover - the guard must fire
+        raise AssertionError("a create that resolves nothing must be refused")
+    assert not (root / "Area" / "Different.md").exists()
+
+
+def test_stage_reports_which_occurrences_the_create_would_fix(tmp_path):
+    registry, config, _ = _vault(
+        tmp_path,
+        {
+            "Area/A.md": "# A\n[[Ghost]]",
+            "Area/B.md": "# B\n[[Ghost]]",
+            "Area/C.md": "# C\n[[OtherMissing]]",
+        },
+    )
+    staged = stage_missing_note(registry, config, "Ghost", "Area/Ghost.md")
+    assert staged["resolved_occurrence_count"] == 2
+    assert staged["still_unresolved_after_create"] == 1
+    assert all("Ghost" in sample for sample in staged["resolved_occurrence_samples"])
+
+
+def test_converge_without_registered_contexts_is_not_a_complete_empty_result(tmp_path):
+    """No definitions is not "nothing to converge to"."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "S.md").write_text("# S\n[[Missing]]", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="bare")
+
+    report = converge_targets(config, [], scan_notes(config.root_path))
+    assert report.configured is False
+    assert report.items == ()
+    assert report.to_dict()["configured"] is False
+
+
+def test_converge_refuses_an_unknown_context_id(tmp_path):
+    registry, config, _ = _vault(tmp_path, {"Area/S.md": "# S\n[[Missing]]"})
+    try:
+        converge_targets(
+            config,
+            DEFINITIONS["contexts"],
+            scan_notes(config.root_path),
+            context_id="research:nope",
+        )
+    except ValueError as error:
+        assert "No registered Context" in str(error)
+    else:  # pragma: no cover - an unknown scope must not silently return nothing
+        raise AssertionError("an unknown --context must be an error, not an empty result")
+
+
 def test_unscoped_targets_are_not_proposed(tmp_path):
     registry, config, _ = _vault(
         tmp_path,

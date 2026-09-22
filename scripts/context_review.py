@@ -12,15 +12,19 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from collections import Counter, defaultdict
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
 from context_compile import (
+    REGISTRY_ABSENT,
+    REGISTRY_VALID,
     compiled_card_name,
     compiled_root,
+    definition_fingerprint,
     definitions_fingerprint,
-    load_compiled_cards,
+    load_card_registry,
     suggest_target,
 )
 from context_manager import extract_tags, note_in_context
@@ -73,28 +77,63 @@ def _quality_items(
         )
 
     items: list[dict[str, Any]] = []
-    for code, source_key, label in (
-        ("broken_reference", "broken_targets", "不存在的笔记"),
-        ("ambiguous_reference", "ambiguous_targets", "多个同名笔记"),
+    for code, source_key, label, grouped_key in (
+        ("broken_reference", "broken_links", "不存在的笔记", "broken_targets"),
+        ("ambiguous_reference", "ambiguous_links", "多个同名笔记", "ambiguous_targets"),
     ):
-        for entry in doctor.get(source_key, []):
-            sources = [str(item) for item in entry.get("sources", [])]
-            ids = sorted({cid for path in sources for cid in scoped_ids(path)})
-            if not ids or (context_id and context_id not in ids):
+        # Scope is decided over the FULL occurrence stream, never over the truncated display
+        # sample: a target whose only in-scope source is its twenty-first occurrence must
+        # still be reported, and its in-scope Context ids must come from the real occurrences.
+        vault_totals = {
+            str(row["target"]): int(row["occurrences"])
+            for row in doctor.get(grouped_key, [])
+        }
+        scoped: dict[str, list[dict[str, Any]]] = defaultdict(list)
+        for row in doctor.get(source_key, []):
+            path = str(row.get("source", ""))
+            ids = [
+                cid
+                for cid in scoped_ids(path)
+                if not context_id or cid == context_id
+            ]
+            if not ids:
                 continue
+            scoped[str(row.get("target", ""))].append(
+                {"path": path, "ids": ids, "hint": row.get("triage_hint")}
+            )
+        for target, entries in sorted(
+            scoped.items(), key=lambda pair: (-len(pair[1]), pair[0].casefold())
+        ):
+            ids = sorted({cid for entry in entries for cid in entry["ids"]})
+            hints = Counter(
+                str(entry["hint"]) for entry in entries if entry["hint"]
+            )
+            dominant = (
+                sorted(hints.items(), key=lambda pair: (-pair[1], pair[0]))[0][0]
+                if hints
+                else None
+            )
+            scoped_total = len(entries)
+            vault_total = vault_totals.get(target, scoped_total)
+            if scoped_total == vault_total:
+                reason = f"{scoped_total} 处链接指向{label} '{target}'"
+            else:
+                reason = (
+                    f"范围内 {scoped_total} 处链接指向{label} '{target}'"
+                    f"（全库同一目标共 {vault_total} 处，其余不在本范围内）"
+                )
             items.append(
                 {
                     "kind": "quality",
                     "context_id": ids[0],
                     "context_ids": ids,
                     "code": code,
-                    "target": entry["target"],
-                    "occurrences": int(entry["occurrences"]),
-                    "path": sources[0] if sources else None,
-                    "triage_hint": entry.get("triage_hint"),
-                    "reason": (
-                        f"{entry['occurrences']} 处链接指向{label} '{entry['target']}'"
-                    ),
+                    "target": target,
+                    "occurrences": scoped_total,
+                    "vault_target_occurrences": vault_total,
+                    "path": entries[0]["path"],
+                    "triage_hint": dominant,
+                    "reason": reason,
                 }
             )
     for path in [*scan.skipped_decode, *scan.skipped_io]:
@@ -160,9 +199,26 @@ def _stale_card_items(
     still guessed for those contexts as a fallback by modification time.
     """
     items: list[dict[str, Any]] = []
-    current_fingerprint = definitions_fingerprint(contexts)
+    registry_state = load_card_registry(registry, config)
+    cards = registry_state["cards"]
+    if registry_state["state"] not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+        # Reported as an item, not only as a basis flag: an unreadable registry silently
+        # removes every card from the agenda, which would otherwise read as "all resolved".
+        items.append(
+            {
+                "kind": "quality",
+                "context_id": context_id or "*",
+                "code": "card_registry_unreadable",
+                "reason": (
+                    f"编译卡登记无法读取（{registry_state['state']}："
+                    f"{registry_state.get('reason')}），卡片的缺失不能算作已解决"
+                ),
+                "path": registry_state["path"],
+                "suggestion": "修复或删除该登记文件后重跑；修复前不要按本议程判断卡片状态",
+            }
+        )
     registered: set[str] = set()
-    for record in load_compiled_cards(registry, config):
+    for record in cards:
         row = next((item for item in contexts if item["id"] == record.get("context_id")), None)
         if row is None:
             continue
@@ -183,14 +239,39 @@ def _stale_card_items(
             path for path in set(recorded) & set(current) if recorded[path] != current[path]
         )
         drift = len(added) + len(removed) + len(changed)
+        external_edit = False
+        if card_path and Path(card_path).is_file():
+            recorded_hash = str(record.get("card_sha256") or "")
+            if recorded_hash:
+                try:
+                    current_hash = hashlib.sha256(Path(card_path).read_bytes()).hexdigest()
+                except OSError:
+                    current_hash = ""
+                external_edit = bool(current_hash) and current_hash != recorded_hash
         if not card_path or not Path(card_path).is_file():
             code = "compiled_card_missing"
             reason = "登记的编译卡已不在记录的输出路径上"
-        elif record.get("definitions_fingerprint") != current_fingerprint:
+        elif external_edit:
+            code = "compiled_card_edited_externally"
+            reason = "卡片内容在发布后被外部修改，需人工复核其依据与范围"
+        elif record.get("basis") != "verified":
+            # The recorded sources may not be the ones the draft was written against, so
+            # "sources unchanged" carries no trustworthy meaning for this card.
+            code = "compiled_card_unverified_basis"
+            reason = (
+                "该卡保存时未提供编译包来源快照，登记的是保存时刻的来源，"
+                "不能据此认定编写依据未变化；请用 --expected-source-snapshot 重新保存"
+            )
+        elif record.get("context_fingerprint") != definition_fingerprint(row):
             # Checked before drift: when the scope itself changed, calling the card "stale"
-            # would wrongly suggest that source files were edited.
+            # would wrongly suggest that source files were edited. Records written before
+            # per-Context fingerprints existed fall here too, which is the honest
+            # "re-verify this" answer rather than a stale-looking one.
             code = "compiled_card_scope_changed"
-            reason = "Context 定义或范围在成卡后变化，卡片覆盖的已不是同一批来源"
+            reason = (
+                "该 Context 的定义或范围在成卡后变化（或该卡缺少单 Context 指纹，需重新校验），"
+                "卡片覆盖的已不是同一批来源"
+            )
         elif drift:
             code = "compiled_card_stale"
             reason = (
@@ -380,6 +461,9 @@ def review_agenda(
             }
         )
     scan = scan_notes(config.root_path)
+    card_registry = load_card_registry(registry, config)
+    card_registry_state = str(card_registry["state"])
+    card_registry_reason = card_registry.get("reason")
     items.extend(_quality_items(config, contexts, scan, context_id=context_id))
     items.extend(_stale_card_items(registry, config, scan, contexts, context_id=context_id))
 
@@ -416,6 +500,8 @@ def review_agenda(
         "context_revision": version["revision"] if version else 0,
         "definitions_fingerprint": definitions_fingerprint(contexts),
         "diagnostics_version": DIAGNOSTICS_VERSION,
+        "card_registry_state": card_registry_state,
+        "card_registry_reason": card_registry_reason,
     }
     basis_reasons: list[str] = []
     if not contexts:
@@ -426,6 +512,9 @@ def review_agenda(
         basis_reasons.append("poll_incomplete")
     if basis["poll_truncated"]:
         basis_reasons.append("poll_truncated")
+    if card_registry_state not in {REGISTRY_ABSENT, REGISTRY_VALID}:
+        # Cards could not be read, so their absence from the agenda proves nothing.
+        basis_reasons.append(f"card_registry_{card_registry_state}")
     basis["complete"] = not basis_reasons
     basis["incomplete_reasons"] = basis_reasons
     if items:
@@ -512,6 +601,8 @@ def review_agenda(
         "ledger_written": ledger_written,
         "poll_status": poll["status"],
         "scan_incomplete": (not basis["complete"]),
+        "incomplete": (not basis["complete"]),
+        "incomplete_reasons": basis["incomplete_reasons"],
         "writes_performed": 0,
         "vault_writes": 0,
         "meaning": (
@@ -552,9 +643,11 @@ def format_review_agenda(result: dict[str, Any]) -> str:
         )
     else:
         lines.append("首次记录（已写入外部台账）" if result["ledger_written"] else "未记录")
-    if result["status"] == "incomplete":
+    if result.get("incomplete"):
+        # Printed even when items exist: a partly-read agenda must not be presented as if it
+        # were a complete one just because `status` says attention.
         reasons = "、".join(result["basis"]["incomplete_reasons"]) or "unknown"
-        lines.append(f"⚠ 判定不完整（{reasons}）：当前没有发现不等于没有问题")
+        lines.append(f"⚠ 判定不完整（{reasons}）：当前结果不代表全部，也不代表没有问题")
     for item in result["items"]:
         target = item.get("path") or item.get("context_id") or ""
         lines.append(f"- [{item['kind']}] {item.get('code')} · {target} · {item.get('reason')}")
