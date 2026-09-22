@@ -19,8 +19,8 @@
 
 ## 1. 现状快照
 
-- 日期：2026-09-22。源码基线：`f479337`。
-- 测试：**273 项通过**（本地开发目录与分发仓库一致），ruff 干净，两处均为纯标准库。
+- 日期：2026-09-22。源码基线：`bdaed3c`。
+- 测试：**274 项通过**（本地开发目录与分发仓库一致），ruff 干净，两处均为纯标准库。
 - 参考 Vault（约 2,150 篇笔记）只读实测：链接出现 7,158 处；解析 897 / 未解析 6,251 / 歧义 10；
   孤立笔记 1,343（其中 475 在已登记范围内）。
 - 登记 6 个 Context（定义修订 5），**0 个启用维护策略**；交付未配置；最后一次维护周期早于本次工作。
@@ -55,7 +55,9 @@
 - 每张卡片登记真实输出路径、单 Context 指纹、`{来源: 校验和}` 与**编写依据**
   （`--expected-source-snapshot` 校验；未提供则标 `unverified basis`）。
 - 登记读取区分 `absent / valid / unreadable / invalid`；登记损坏时 basis 不完整、不算已解决、退出 2。
-- 卡片被外部修改会被标出。（`b8c3dec`）
+- 卡片被外部修改会被标出。
+- **未登记的卡片不会被静默信任**：登记机制之前写下的卡片都会报 `compiled_card_unregistered`，
+  因为它的内容与编写依据都不在工具掌握之中；"修改时间比来源新"不构成它仍然有效的证据。
 
 **知识页（P1）**
 - `contexts page publish`：外部知识区、带版本、含依据 manifest。
@@ -143,7 +145,7 @@
 |---|---|---|---|
 | 1 | 真实新会话端到端确认（自动检索注入） | S | 一次真实新会话在调用模型前注入了带出处的证据；续接会话不重复检索 |
 | 2 | 集成改动入库（Ductor 侧规则与工具改动） | S | 工作树干净，改动的来源与用途有记录 |
-| 3 | 卡片登记无法覆盖其存在之前写的卡 | S | 旧卡要么被重新发布并登记，要么在议程中明确标为"依据未知" |
+| 3 | ~~卡片登记无法覆盖其存在之前写的卡~~ | S | **已完成**：未登记卡片报 `compiled_card_unregistered`，不再被静默信任 |
 
 ---
 
@@ -208,13 +210,13 @@ python scripts/knowledge_router.py contexts get research:ccs --vault <NAME>
 
 在参考 Vault 上应看到（与第 1 节一致）：
 
-- `review`：事项 2,734；`counts_by_code` 为 `compiled_card_stale 1 / broken_reference 2255 / orphan_note 475 / ambiguous_reference 3`；
+- `review`：事项 2,735；`counts_by_code` 为 `compiled_card_stale 1 / compiled_card_unregistered 1 / broken_reference 2255 / orphan_note 475 / ambiguous_reference 3`；
   `basis.complete=true`、`incomplete=false`；`card_registry_state=absent`；
   `maintenance_status=no_policies`、`maintenance_configured_contexts=0`。
 - `converge`：`configured=true`、目标 146；建议分布 `create_or_relink 117 / needs_judgement 25 / check_naming_variant 4`。
 - `page list`：两张页面均 `stale=False`。
 
-测试：`python -m pytest`（273 项）与 `python -m ruff check scripts tests`。
+测试：`python -m pytest`（274 项）与 `python -m ruff check scripts tests`。
 
 **不要把"当前没有发现"读成"没有问题"**：`incomplete=true` 时结果不代表全部；`configured=false` 时不代表
 范围为空；登记不可读时不代表没有卡片。

@@ -99,7 +99,7 @@ from host-specific activation gates.
       recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
       version is part of the generation hash, so changing the layout rebuilds instead of
       silently reusing a stale index.
-- [x] `tests/` suite: **273 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **274 tests**, ruff- and bytecode-clean.
 
 ## Correctness closeout (P0 of the roadmap review)
 
@@ -187,6 +187,11 @@ with a regression test.
       resolve nothing.
 - [x] `status` no longer masks an incomplete basis when items exist: incompleteness is a top-level
       `incomplete` field and the warning is printed whenever it is set.
+- [x] An unregistered card is not a trusted card. The legacy fallback emitted an item only when a
+      source was newer than the card file, so a card that was merely *older* than its sources
+      passed with no item at all. Such cards now report `compiled_card_unregistered`; on the
+      reference Vault this surfaced a second card that had been silently trusted, taking the
+      agenda from 2,734 to 2,735 items.
 
 ## Open
 

@@ -337,3 +337,17 @@ of a review, and nothing here reduces it. The measurement is one machine, one Va
 percentages are not a general performance claim.
 
 Suite: **273 tests**, ruff clean.
+
+## 2026-09-22 — an unregistered card is not a trusted card
+
+The third closeout item from the development plan. The fallback for cards written before the registry
+existed emitted an item only when a source was newer than the card file, so a card that was merely
+*older* than its sources passed with no item at all — even though neither its content nor its
+authoring basis is known to the tool. A newer file timestamp is not evidence of currency.
+
+Such cards now report `compiled_card_unregistered` with `basis: unregistered` and the command to
+re-publish under a recorded basis. On the reference Vault this surfaced a real case immediately: the
+second published card had been silently trusted, so the agenda went from 2,734 to 2,735 items, one
+card stale and one unregistered. That is the honest state — it was not two cards passing.
+
+Suite: **274 tests**, ruff clean.

@@ -127,7 +127,9 @@ production state into an arbitrary location or another Vault.
   `{source path: checksum}` set it was built from, so review can later report it as
   `compiled_card_stale` (sources added, removed or edited), `compiled_card_scope_changed` (the
   Context was re-scoped), or `compiled_card_missing` — for custom `--out-root`/`--name` locations too.
-  Cards written before this record existed keep a default-path modification-time fallback.
+  Cards written before this record existed keep a default-path modification-time fallback, and
+  are reported as `compiled_card_unregistered`: an older file timestamp is not evidence that such
+  a card is still valid, so re-publish it to bring it under the tracked basis.
   Always pass `--expected-source-snapshot <bundle.source_snapshot_sha256>` from the compile bundle the
   draft was written against: it is verified before anything is written, so a draft cannot be vouched
   for by a *later* source state than the one it was authored from (a mismatch is refused and you must
