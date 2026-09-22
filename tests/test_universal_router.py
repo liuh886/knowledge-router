@@ -206,6 +206,43 @@ class TestKnowledgeRouter(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "generation mismatch"):
             search_index(index, "Qatar", generation="forged-generation")
 
+    def test_index_carries_no_write_only_trigram_table(self) -> None:
+        """The trigram table was built and populated but never queried.
+
+        Keeping it cost ~51 MB per generation on a real Vault, so it is gone and the
+        schema version was bumped. CJK recall is served by `note_bigrams` instead, which
+        this checks by searching Chinese text after the removal.
+        """
+        _write(
+            self.vault / "200_Area" / "234_Qatar" / "中文备注.md",
+            "# 中文备注\n这是用于验证中文检索仍然可用的测试内容。\n",
+        )
+        _report, config, index = self._attach()
+        with sqlite3.connect(index) as connection:
+            tables = {
+                row[0]
+                for row in connection.execute(
+                    "SELECT name FROM sqlite_master WHERE type IN ('table','view')"
+                )
+            }
+            metadata = dict(connection.execute("SELECT key, value FROM metadata"))
+            bigrams = connection.execute("SELECT COUNT(*) FROM note_bigrams").fetchone()[0]
+        self.assertNotIn("notes_trigram", tables)
+        self.assertNotIn("notes_trigram_data", tables)
+        self.assertNotIn("trigram", metadata)
+        self.assertEqual(metadata["schema_version"], "5")
+        self.assertGreater(bigrams, 0)
+
+        results = search_index(
+            index,
+            "中文检索",
+            vault_root=self.vault,
+            vault_id=config.id,
+            generation=config.index_generation,
+        )
+        self.assertTrue(results)
+        self.assertEqual(results[0]["path"], "200_Area/234_Qatar/中文备注.md")
+
     def test_content_addressed_generation_is_reused_when_sources_do_not_change(
         self,
     ) -> None:

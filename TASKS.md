@@ -74,7 +74,32 @@ from host-specific activation gates.
       `broken_by_hint`). A hint is never a verdict; no reference is dismissed because of its
       source, and no target is called actionable from its name alone.
 - [x] `_stale_card_items` checks the external compiled area as well as any in-Vault card.
-- [x] `tests/` suite: **207 tests**, ruff- and bytecode-clean.
+- [x] Orphans are first-class agenda items: an in-scope note nobody links to and that links
+      nowhere is reported by `contexts review` as `orphan_note`, with `counts_by_code` exposing
+      the composition and `--code` narrowing the display (never the ledger). Broken links see
+      "points at nothing"; orphans are the other half, "nothing points here".
+- [x] Link convergence: `contexts converge` collapses repeated unresolved targets into one
+      decision each. Grouping is case-insensitive (`CCS` and `ccs` are one missing note) and
+      carries the evidence (occurrences, sample sources, triage hint). Suggestions are
+      `check_naming_variant` (a unique same-name variant exists, e.g. `Digital Carbon` vs
+      `Digital_Carbon`), `create_or_relink`, or `needs_judgement` for names too generic to guess.
+      Machine-generated noise is excluded by default but counted (`excluded_noisy_*`), and a
+      suggestion is never a verdict.
+- [x] A real, bounded write path for convergence: `contexts converge --create X --target-path
+      A/B.md` freezes an ordinary capture plan (preview, nothing written) and
+      `capture --plan-id <id> --commit` lands it under `append-create`. Staging refuses a path
+      that already exists, because the broker would otherwise pick a unique sibling name and the
+      link would silently stay broken. Alias edits are *not* expressible under `append-create`;
+      that is stated rather than faked.
+- [x] State bloat removed, with the reason recorded: per-revision `bindings` snapshots are kept
+      only on the latest revision (the only one ever read) via `contexts compact`, and
+      `register_contexts` compacts on every append. Historical `definitions` are preserved.
+- [x] External index schema 5 drops the `notes_trigram` table, which was created and populated
+      but never queried (~51 MB of write-only weight per generation on a real Vault). Chinese
+      recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
+      version is part of the generation hash, so changing the layout rebuilds instead of
+      silently reusing a stale index.
+- [x] `tests/` suite: **224 tests**, ruff- and bytecode-clean.
 
 ## Open
 

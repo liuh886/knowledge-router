@@ -21,7 +21,7 @@ from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import scan_notes
 from registry import FileLock, VaultConfig, VaultRegistry
-from vault_doctor import diagnose_vault
+from vault_doctor import NOISY_HINTS, diagnose_vault
 
 _LEDGER = "review_ledger.jsonl"
 
@@ -104,6 +104,26 @@ def _quality_items(
                 "occurrences": 1,
                 "path": path,
                 "reason": "来源无法按 UTF-8 读取或访问，需人工检查",
+            }
+        )
+    # Orphans are the other half of connectivity: a note nobody links to and that links
+    # nowhere is invisible to every forward-looking signal. The reverse is that an orphan
+    # has no inbound link to travel along, so this can only be detected by membership, and
+    # only scoped notes are reported.
+    for path in doctor.get("orphans", []):
+        ids = scoped_ids(str(path))
+        if not ids or (context_id and context_id not in ids):
+            continue
+        items.append(
+            {
+                "kind": "quality",
+                "context_id": ids[0],
+                "context_ids": ids,
+                "code": "orphan_note",
+                "occurrences": 0,
+                "path": str(path),
+                "reason": "该笔记在范围内，但全库既没有链接指向它，它也没有链接指向别处",
+                "suggestion": "把它接入相关 MOC，或补上它应有的上级/相关链接",
             }
         )
     items.sort(
@@ -229,14 +249,13 @@ _KIND_PRIORITY = {
 }
 # Hints that usually mean machine-generated link noise. They are ranked last for
 # display but are still counted, still written to the ledger, and never dropped.
-_NOISY_HINTS = frozenset({"zotero_generated", "template_placeholder"})
 
 
 def _rank_item(item: dict[str, Any]) -> tuple[Any, ...]:
     hint = item.get("triage_hint")
     return (
         _KIND_PRIORITY.get(str(item["kind"]), 9),
-        1 if hint in _NOISY_HINTS else 0,
+        1 if hint in NOISY_HINTS else 0,
         -int(item.get("occurrences") or 0),
         str(item.get("code") or ""),
         str(item.get("target") or item.get("path") or ""),
@@ -250,10 +269,16 @@ def review_agenda(
     *,
     context_id: str | None = None,
     limit: int = 20,
+    code: str | None = None,
     record: bool = True,
     now: datetime | None = None,
 ) -> dict[str, Any]:
-    """Return one bounded, prioritized review agenda and optionally record it."""
+    """Return one bounded, prioritized review agenda and optionally record it.
+
+    `code` narrows the *display* only. The ledger, fingerprint and delta are always
+    computed over the full item set, so filtering a view can never be mistaken for
+    having resolved anything.
+    """
     if type(limit) is not int or not 1 <= limit <= 100:
         raise ValueError("Review limit must be between 1 and 100")
     now = now or datetime.now(UTC)
@@ -289,13 +314,18 @@ def review_agenda(
     for item in items:
         item["id"] = _item_id(item)
     items.sort(key=_rank_item)
+    matched = [item for item in items if code is None or item.get("code") == code]
     fingerprint = hashlib.sha256(
         json.dumps(items, ensure_ascii=False, sort_keys=True).encode()
     ).hexdigest()
     counts: dict[str, int] = {}
     hint_counts: dict[str, int] = {}
+    code_counts: dict[str, int] = {}
     for item in items:
         counts[item["kind"]] = counts.get(item["kind"], 0) + 1
+        item_code = str(item.get("code") or "")
+        if item_code:
+            code_counts[item_code] = code_counts.get(item_code, 0) + 1
         hint = item.get("triage_hint")
         if hint:
             hint_counts[str(hint)] = hint_counts.get(str(hint), 0) + 1
@@ -380,10 +410,13 @@ def review_agenda(
         "scope": scope,
         "status": status,
         "item_count": len(items),
+        "display_filter": code,
+        "display_matched": len(matched),
         "counts_by_kind": counts,
+        "counts_by_code": code_counts,
         "counts_by_hint": hint_counts,
-        "items": items[:limit],
-        "items_truncated": len(items) > limit,
+        "items": matched[:limit],
+        "items_truncated": len(matched) > limit,
         "fingerprint": fingerprint,
         "delta": delta,
         "basis": basis,
@@ -406,6 +439,13 @@ def format_review_agenda(result: dict[str, Any]) -> str:
         f"状态 {result['status']} · 事项 {result['item_count']} · "
         f"分布 {result['counts_by_kind']} · poll {result['poll_status']}",
     ]
+    if result.get("counts_by_code"):
+        lines.append(f"类别分布：{result['counts_by_code']}")
+    if result.get("display_filter"):
+        lines.append(
+            f"仅显示 code={result['display_filter']} 的 {result['display_matched']} 项"
+            f"（共 {result['item_count']} 项；筛选只影响显示）"
+        )
     if result.get("counts_by_hint"):
         lines.append(f"线索分布（仅提示，不构成忽略依据）：{result['counts_by_hint']}")
     delta = result["delta"]

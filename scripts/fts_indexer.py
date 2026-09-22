@@ -86,6 +86,9 @@ _CONCEPT_ALIASES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("机器学习", ("machine learning",)),
 )
 _VALIDATED_INDEXES: dict[str, tuple[int, int, int, int, str, str, str]] = {}
+# Layout version of the external search index. Bump this whenever the table layout
+# changes: it is part of the generation hash, so a bump rebuilds instead of reusing.
+_SCHEMA_VERSION = "5"
 
 
 @dataclass(frozen=True, slots=True)
@@ -232,7 +235,7 @@ def _create_schema(
     vault_root: Path,
     vault_id: str,
     scan: ScanReport,
-) -> bool:
+) -> None:
     connection.executescript(
         """
         PRAGMA journal_mode=DELETE;
@@ -263,28 +266,18 @@ def _create_schema(
         ) WITHOUT ROWID;
         """
     )
-    trigram = True
-    try:
-        connection.execute(
-            "CREATE VIRTUAL TABLE notes_trigram USING fts5("
-            "ulid UNINDEXED, title, path, content, tokenize='trigram')"
-        )
-    except sqlite3.Error:
-        trigram = False
     connection.executemany(
         "INSERT INTO metadata(key, value) VALUES (?, ?)",
         (
-            ("schema_version", "4"),
+            ("schema_version", _SCHEMA_VERSION),
             ("generation", generation),
             ("vault_root", str(vault_root.expanduser().resolve())),
             ("vault_id", vault_id),
             ("skipped_decode", json.dumps(scan.skipped_decode, ensure_ascii=False)),
             ("skipped_io", json.dumps(scan.skipped_io, ensure_ascii=False)),
             ("created_at", datetime.now(UTC).isoformat()),
-            ("trigram", "1" if trigram else "0"),
         ),
     )
-    return trigram
 
 
 def _cjk_bigrams(*values: str) -> set[str]:
@@ -303,13 +296,19 @@ def build_database(
     vault_root: Path,
     vault_id: str,
 ) -> None:
-    """Build and verify a new immutable index at a path that must not exist."""
+    """Build and verify a new immutable index at a path that must not exist.
+
+    The index intentionally carries no trigram table. Earlier generations built one, but
+    nothing ever queried it - the CJK path is served by `note_bigrams` and then a LIKE
+    fallback, while `notes_fts` handles English. Dropping the write-only table removes
+    roughly a third of the index size without changing any search result.
+    """
     if index_path.exists():
         raise FileExistsError(index_path)
     index_path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(index_path)
     try:
-        trigram = _create_schema(
+        _create_schema(
             connection,
             generation=generation,
             vault_root=vault_root,
@@ -352,14 +351,6 @@ def build_database(
             "INSERT INTO bigram_stats(gram, document_count) "
             "SELECT gram, COUNT(*) FROM note_bigrams GROUP BY gram"
         )
-        if trigram:
-            connection.executemany(
-                "INSERT INTO notes_trigram VALUES (?, ?, ?, ?)",
-                (
-                    (item.ulid, item.title, item.path, item.content)
-                    for item in scan.records
-                ),
-            )
         connection.commit()
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         notes = int(connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
@@ -391,7 +382,10 @@ def _require_complete_scan(scan: ScanReport) -> None:
 
 
 def _generation_from_pairs(pairs: Any) -> str:
-    digest = hashlib.sha256(b"knowledge-router-index-schema-4\0")
+    # The schema version is part of the prefix, so a schema change yields a new generation
+    # filename. Without that the content-addressed generation would match an existing index
+    # and silently reuse it, keeping a stale layout alive forever.
+    digest = hashlib.sha256(f"knowledge-router-index-schema-{_SCHEMA_VERSION}\0".encode())
     normalized = sorted((str(path), str(checksum)) for path, checksum in pairs)
     for path, checksum in normalized:
         digest.update(path.encode("utf-8"))

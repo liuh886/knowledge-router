@@ -182,7 +182,8 @@ def test_incomplete_basis_never_reports_clear(tmp_path):
     root = tmp_path / "vault"
     (root / "Area").mkdir(parents=True)
     (root / "Out").mkdir()
-    (root / "Area" / "Clean.md").write_text("# Clean\nnothing broken here", encoding="utf-8")
+    (root / "Area" / "Clean.md").write_text("# Clean\n[[Clean2]]", encoding="utf-8")
+    (root / "Area" / "Clean2.md").write_text("# Clean2\n[[Clean]]", encoding="utf-8")
     registry = VaultRegistry(tmp_path / "state")
     config = registry.attach(root, name="clean")
     register_contexts(registry, config, DEFINITIONS)
@@ -212,6 +213,51 @@ def test_missing_contexts_never_reports_clear(tmp_path):
     assert result["item_count"] == 0
     assert result["status"] == "incomplete"
     assert "no_registered_contexts" in result["basis"]["incomplete_reasons"]
+
+
+def test_agenda_surfaces_scoped_orphans_and_ignores_unscoped_ones(tmp_path):
+    """A note nobody links to and that links nowhere is reported, but only in scope."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Out").mkdir()
+    (root / "Area" / "Isolated.md").write_text("# Isolated\nnothing links here", encoding="utf-8")
+    (root / "Area" / "Linked.md").write_text("# Linked\n[[Missing]]", encoding="utf-8")
+    (root / "Out" / "Stray.md").write_text("# Stray\nno links either", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="orphans")
+    register_contexts(registry, config, DEFINITIONS)
+
+    result = review_agenda(registry, config, record=False)
+    orphan_paths = {
+        item["path"] for item in result["items"] if item.get("code") == "orphan_note"
+    }
+    assert result["counts_by_code"]["orphan_note"] == 1
+    assert orphan_paths == {"Area/Isolated.md"}
+    # A note with an outgoing link is not an orphan, and an out-of-scope note is not
+    # reported even when it is genuinely isolated.
+    assert "Area/Linked.md" not in orphan_paths
+    assert "Out/Stray.md" not in orphan_paths
+
+
+def test_code_filter_changes_display_only_not_the_ledger(tmp_path):
+    """Filtering a view must never look like resolving items."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Broken.md").write_text("# B\n[[Gone]]", encoding="utf-8")
+    (root / "Area" / "Isolated.md").write_text("# I\nno links", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="filter")
+    register_contexts(registry, config, DEFINITIONS)
+
+    everything = review_agenda(registry, config, record=False, limit=50)
+    filtered = review_agenda(registry, config, record=False, limit=50, code="orphan_note")
+    assert filtered["item_count"] == everything["item_count"]
+    assert filtered["fingerprint"] == everything["fingerprint"]
+    assert filtered["counts_by_code"] == everything["counts_by_code"]
+    assert filtered["display_filter"] == "orphan_note"
+    assert filtered["display_matched"] == everything["counts_by_code"]["orphan_note"]
+    assert all(item["code"] == "orphan_note" for item in filtered["items"])
+    assert "筛选只影响显示" in format_review_agenda(filtered)
 
 
 def test_delta_is_incomparable_against_a_pre_fix_ledger_entry(vault):

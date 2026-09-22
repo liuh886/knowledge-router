@@ -134,6 +134,37 @@ elsewhere. Both are reported as information; the verdicts stay ambiguous and unr
 reference is irrelevant, and a plausible name such as `CCS` is deliberately left `needs_review`
 rather than promoted to actionable.
 
+**Closing the loop: orphans and convergence.** Reporting a broken link says "this points at
+nothing"; it says nothing about the other half — notes nothing points at. `contexts review` now
+includes in-scope orphans as `orphan_note` items, so an isolated note inside a maintained scope
+becomes visible, and `counts_by_code` plus `--code` expose the composition without changing what
+the ledger records.
+
+Repeating the same missing name was still N findings for one decision. `contexts converge` groups
+unresolved targets case-insensitively and attaches the evidence, then suggests one of three steps:
+a unique same-name variant (`check_naming_variant`), nothing similar (`create_or_relink`), or a name
+too generic to guess (`needs_judgement`). On the reference Vault this turns 562 `needs_review`
+occurrences over 186 distinct names into 146 in-scope targets: 117 `create_or_relink`, 4
+naming-variant, 25 `needs_judgement`, with 2,112 machine-generated targets (5,534 occurrences)
+excluded but counted. The single largest case, `CCS`/`ccs` at 269 occurrences, collapses to one
+decision.
+
+The only write path this unlocks goes through the existing capture broker: `converge --create`
+freezes a plan and `capture --commit` lands it under `append-create`, and staging refuses a target
+path that already exists because a unique-sibling rename would leave the link broken while looking
+like success. Alias edits cannot be expressed under `append-create` at all, and that is stated
+instead of approximated. A round-trip test stages, commits, and asserts the previously broken link
+now resolves.
+
+**Removing dead weight rather than adding machinery.** Two sources of bloat were measured rather
+than guessed at. Per-revision `bindings` snapshots made up 759 KB of an 855 KB store; only the
+latest revision is ever read, so `contexts compact` (and every append) keeps that one and preserves
+the rest of the history. The external index built a trigram table that no code ever queried — a
+grep for the table name found only its creation and its inserts. Removing it cuts the index from
+102 MB to 51.8 MB on the reference Vault, with Chinese search still served by `note_bigrams`. The
+schema version is part of the generation hash, so the layout change rebuilds instead of silently
+reusing the old index.
+
 Read-only acceptance on a ~2,150-note Obsidian Vault:
 
 - 7,158 wikilink occurrences = 897 resolved + 6,251 broken + 10 ambiguous (no occurrence dropped)
@@ -147,11 +178,14 @@ Read-only acceptance on a ~2,150-note Obsidian Vault:
 - 13 unresolved path targets are flagged as undocumented-basename-fallback cases and 4 ambiguities
   as proximity-collapsible; neither is resolved
 - resolution mix: 798 unique filename, 106 vault path, 3 alias, 0 note-relative
-- the agenda surfaces the composition via `counts_by_hint`, detects a stale externally deposited
-  compiled card, and two consecutive runs report no new and no resolved items, with the earlier
-  pre-fix entry correctly refusing comparison instead of claiming resolutions
+- agenda: 2,734 items = 2,255 broken + 475 scoped orphans + 3 ambiguous + 1 stale card, all
+  reported by `counts_by_code`
+- external state: 217.3 MB → 164.5 MB, with the store at 855 KB → 237 KB (−72%) and the new index
+  at 51.8 MB vs 102 MB; the previous generation is retained for rollback
+- a staged stub committed under `append-create` resolved a real broken link in an isolated Vault
 
-Suite: **207 tests**, ruff clean. The ambiguous and basename-fallback cases remain undecided by
-design, so any count that depends on them is a report rather than a verdict, and the triage ranking
-is a convenience rather than a completeness proof.
+Suite: **224 tests**, ruff clean. The ambiguous and basename-fallback cases remain undecided by
+design, so any count that depends on them is a report rather than a verdict; the triage ranking is a
+convenience rather than a completeness proof; and convergence suggestions are evidence, not
+verdicts.
 

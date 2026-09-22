@@ -79,6 +79,62 @@ def _bindings(definitions: dict[str, Any], scan: ScanReport) -> dict[str, Any]:
     }
 
 
+def _compact_bindings(store: dict[str, Any]) -> int:
+    """Keep `bindings` only on the latest revision, which is the only one read.
+
+    Every revision used to carry a complete scope -> {path: checksum} snapshot. On a real
+    Vault that is ~200 KB per revision and it grew with each registration, all of it dead:
+    `load_context_version` returns the last revision and both consumers (`check_contexts`,
+    context maintenance) read that one. Historical `definitions` are kept, so the record of
+    what was declared is intact; only the redundant derived snapshot is dropped.
+    """
+    removed = 0
+    for previous in store["versions"][:-1]:
+        if "bindings" in previous:
+            previous.pop("bindings")
+            previous["bindings_compacted"] = True
+            removed += 1
+    return removed
+
+
+def compact_context_store(registry: VaultRegistry, config: VaultConfig) -> dict[str, Any]:
+    """Rewrite the store dropping per-revision bindings outside the latest revision."""
+    state = registry.vault_state_dir(config)
+    path = state / _FILENAME
+    if not path.is_file():
+        return {
+            "schema_version": 1,
+            "status": "unregistered",
+            "vault_id": config.id,
+            "bytes_before": 0,
+            "bytes_after": 0,
+            "revisions_compacted": 0,
+            "vault_writes": 0,
+        }
+    with registry.guard_vault_state(config) as guard:
+        with FileLock(state / ".contexts.lock", pinned_parent=guard):
+            before = path.stat().st_size
+            store = _read(config, guard)
+            removed = _compact_bindings(store)
+            if removed:
+                atomic_json_write(path, {**store, "checksum": _digest(store)})
+            after = path.stat().st_size
+    return {
+        "schema_version": 1,
+        "status": "compacted" if removed else "already_compact",
+        "vault_id": config.id,
+        "bytes_before": before,
+        "bytes_after": after,
+        "bytes_saved": max(0, before - after),
+        "revisions_compacted": removed,
+        "vault_writes": 0,
+        "meaning": (
+            "Removes redundant per-revision binding snapshots from external state. "
+            "The Vault itself is never touched."
+        ),
+    }
+
+
 def register_contexts(
     registry: VaultRegistry,
     config: VaultConfig,
@@ -158,6 +214,7 @@ def register_contexts(
                 "source_generation": catalog["source_generation"],
             }
             store["versions"].append(revision)
+            _compact_bindings(store)
             atomic_json_write(state / _FILENAME, {**store, "checksum": _digest(store)})
     return {
         "schema_version": 1,

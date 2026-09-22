@@ -35,6 +35,10 @@ TRIAGE_TEMPLATE = "template_placeholder"
 TRIAGE_ASSET = "missing_asset_reference"
 TRIAGE_REVIEW = "needs_review"
 
+# Hints that usually mean machine-generated link noise. Ranked last for display and
+# excluded from convergence by default, but always counted and never dropped.
+NOISY_HINTS = frozenset({TRIAGE_ZOTERO, TRIAGE_TEMPLATE})
+
 _ZOTERO_DIR = re.compile(r"zotero", re.IGNORECASE)
 _TEMPLATE_DIRS = frozenset({"template", "templates", "模板"})
 _PLACEHOLDER_TARGETS = frozenset(

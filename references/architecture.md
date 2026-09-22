@@ -1,8 +1,7 @@
 # Windows-local architecture
 
-This document is the authoritative architecture for the local delivery. The repository at
-`D:\Documents\GitHub\knowledge-router` remains a future portability target and may still describe
-the earlier prototype.
+This document is the authoritative architecture for the local delivery. The published
+repository remains a future portability target and may still describe the earlier prototype.
 
 ## Product boundary
 

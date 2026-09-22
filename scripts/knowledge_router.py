@@ -28,7 +28,12 @@ from context_followups import followup_change, list_followups
 from context_maintenance import maintenance_queue
 from context_review import format_review_agenda, review_agenda
 from context_state import project_state
-from context_store import check_contexts, load_context_version, register_contexts
+from context_store import (
+    check_contexts,
+    compact_context_store,
+    load_context_version,
+    register_contexts,
+)
 from context_tick import poll_contexts
 from maintenance_cycle import (
     maintenance_coverage,
@@ -38,6 +43,7 @@ from maintenance_cycle import (
 from due_time import resolve_due_time
 from evidence import EvidenceRecord, merge_evidence
 from fts_indexer import audit_index, scan_notes
+from link_convergence import converge_targets, format_convergence, stage_missing_note
 from link_graph import context_links, format_context_links
 from project_adapter import (
     list_projects as list_catalog_projects,
@@ -358,9 +364,41 @@ def _parser() -> argparse.ArgumentParser:
     )
     review.add_argument("--context")
     review.add_argument("--limit", type=int, default=20)
+    review.add_argument(
+        "--code",
+        help="Show only one finding code (display filter; the ledger still records all)",
+    )
     review.add_argument("--no-record", action="store_true")
     review.add_argument("--vault")
     review.add_argument("--json", action="store_true")
+    converge = context_sub.add_parser(
+        "converge",
+        help="Collapse repeated unresolved link targets into one decision each",
+    )
+    converge.add_argument("--context")
+    converge.add_argument("--limit", type=int, default=20)
+    converge.add_argument("--min-occurrences", type=int, default=1)
+    converge.add_argument(
+        "--include-noisy",
+        action="store_true",
+        help="Also converge machine-generated link noise (Zotero/template)",
+    )
+    converge.add_argument(
+        "--create",
+        help="Stage a plan creating this unresolved target (requires --target-path)",
+    )
+    converge.add_argument("--target-path", help="Vault-relative .md path for --create")
+    converge.add_argument("--content-file", type=Path)
+    converge.add_argument("--title")
+    converge.add_argument("--idempotency-key")
+    converge.add_argument("--vault")
+    converge.add_argument("--json", action="store_true")
+    compact = context_sub.add_parser(
+        "compact",
+        help="Drop redundant per-revision binding snapshots from external state",
+    )
+    compact.add_argument("--vault")
+    compact.add_argument("--json", action="store_true")
     history = context_sub.add_parser(
         "history", help="List applied event references for one Context"
     )
@@ -798,12 +836,88 @@ def main() -> int:
                     config,
                     context_id=args.context,
                     limit=args.limit,
+                    code=args.code,
                     record=not args.no_record,
                 )
                 _emit(
                     agenda,
                     json_output=args.json,
                     message=format_review_agenda(agenda),
+                )
+                return 0
+            elif args.context_command == "converge":
+                if args.create:
+                    if not args.target_path:
+                        raise ValueError("--create requires --target-path")
+                    content = (
+                        args.content_file.read_text(encoding="utf-8")
+                        if args.content_file
+                        else None
+                    )
+                    staged = stage_missing_note(
+                        registry,
+                        config,
+                        args.create,
+                        args.target_path,
+                        content=content,
+                        title=args.title,
+                        idempotency_key=args.idempotency_key,
+                    )
+                    _emit(
+                        staged,
+                        json_output=args.json,
+                        message=(
+                            f"已冻结计划（未写入）：{staged['action']} -> "
+                            f"{staged['relative_path']}\n"
+                            f"计划：{staged['plan_id']}\n"
+                            f"提交：{staged['next_step']}"
+                        ),
+                    )
+                    return 0
+                version = load_context_version(registry, config)
+                definitions = version["definitions"]["contexts"] if version else []
+                scan = scan_notes(config.root_path)
+                report = converge_targets(
+                    config,
+                    definitions,
+                    scan,
+                    context_id=args.context,
+                    min_occurrences=args.min_occurrences,
+                    include_noisy=args.include_noisy,
+                )
+                summary = report.to_dict()
+                result = {
+                    "schema_version": 1,
+                    "vault_id": config.id,
+                    "scope": report.scope,
+                    **summary,
+                    "items": [
+                        item.to_dict() for item in report.items[: args.limit]
+                    ],
+                    "items_truncated": len(report.items) > args.limit,
+                    "writes_performed": 0,
+                    "vault_writes": 0,
+                    "meaning": (
+                        "One decision per repeated target name, with the evidence behind each "
+                        "suggestion. Suggestions are not verdicts and nothing is written."
+                    ),
+                }
+                _emit(
+                    result,
+                    json_output=args.json,
+                    message=format_convergence(report),
+                )
+                return 0
+            elif args.context_command == "compact":
+                result = compact_context_store(registry, config)
+                _emit(
+                    result,
+                    json_output=args.json,
+                    message=(
+                        f"状态 {result['status']} · 压缩 {result['revisions_compacted']} 个历史版本 · "
+                        f"{result['bytes_before']:,} -> {result['bytes_after']:,} 字节"
+                        f"（省 {result.get('bytes_saved', 0):,}）"
+                    ),
                 )
                 return 0
             elif args.context_command == "state":

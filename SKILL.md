@@ -127,12 +127,28 @@ production state into an arbitrary location or another Vault.
   the directory must already exist (no directory is created) and the copy is written only by
   `capture --commit --plan-id <id>` under an explicit `append-create` policy.
 - Assemble a bounded review agenda with `contexts review [--context ID] [--limit N]
-  [--no-record] --vault <name> [--json]`. It merges maintenance-due Contexts, due follow-ups,
-  and aggregated in-scope doctor findings (broken/ambiguous targets grouped by occurrence,
-  maintained scopes only) into one prioritized list, then appends a durable entry to an external
-  ledger. Re-running reports `new_item_ids` and `resolved_item_ids` deltas. The Vault is only
-  read: nothing is repaired, deleted or rewritten, and unscoped findings stay available through
-  `quality`.
+  [--code CODE] [--no-record] --vault <name> [--json]`. It merges maintenance-due Contexts, due
+  follow-ups, stale compiled cards, aggregated in-scope doctor findings (broken/ambiguous targets
+  grouped by occurrence, maintained scopes only) and **in-scope orphans** into one prioritized
+  list, then appends a durable entry to an external ledger. `counts_by_code` shows the composition
+  and `--code` narrows the display only. Re-running reports `new_item_ids` and `resolved_item_ids`
+  deltas. The Vault is only read: nothing is repaired, deleted or rewritten, and unscoped findings
+  stay available through `quality`.
+- Collapse repeated unresolved targets into one decision each with
+  `contexts converge [--context ID] [--limit N] [--min-occurrences N] [--include-noisy] --vault
+  <name> [--json]`. Names are grouped case-insensitively, machine-generated noise is excluded by
+  default but counted (`excluded_noisy_*`), and each target carries its evidence plus a suggestion:
+  `check_naming_variant` when a unique same-name variant exists, `create_or_relink` when nothing
+  resembles it, `needs_judgement` when the name is too generic to guess. Suggestions are evidence,
+  not verdicts.
+- Stage a create for one unresolved target with
+  `contexts converge --create "<target>" --target-path <relative.md>`; this freezes a normal
+  capture plan and writes nothing. Land it with `capture --plan-id <id> --commit` under
+  `append-create`. Staging refuses a path that already exists, because a unique-sibling rename
+  would leave the link broken while appearing to succeed. Alias edits are not expressible under
+  `append-create`.
+- Drop redundant per-revision binding snapshots from external state with `contexts compact
+  --vault <name>`; historical definitions are preserved and the Vault is untouched.
 
 - Search before answering Vault-specific questions:
   `python scripts/knowledge_router.py search "<query>" --vault <name> --json`
@@ -237,7 +253,8 @@ the user wants cross-Vault retrieval.
   automatic note rewrite, merge, deletion, or repository action.
 - Index activation fails if any Markdown source is unreadable. Search verifies the database's
   `(path, checksum)` manifest, canonical Vault root, Vault id, and content-addressed generation
-  before answering—even for an empty query.
+  before answering—even for an empty query. The generation hash includes the index schema version,
+  so a layout change rebuilds rather than silently reusing an older index.
 - If retrieval abstains or a brief reports `evidence_gap`, say that the Vault lacks sufficient
   evidence instead of inventing an answer.
 

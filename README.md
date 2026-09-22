@@ -53,7 +53,7 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 32 modules are pure Python standard library. The full suite is **207 tests**. See
+All 33 modules are pure Python standard library. The full suite is **224 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
 
@@ -166,12 +166,12 @@ knowledge-router/
 ├── SKILL.md                 # agent-facing command contract
 ├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
 ├── pyproject.toml           # pytest + ruff configuration
-├── scripts/                 # 32 stdlib-only modules
+├── scripts/                 # 33 stdlib-only modules
 ├── examples/contexts.json   # Context definition template
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 207 tests
+└── tests/                   # 224 tests
 ```
 
 ## Deferred (explicitly)
