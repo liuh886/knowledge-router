@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+from context_compile import write_compiled_card
 from context_review import format_review_agenda, review_agenda
 from context_store import register_contexts
 from registry import VaultRegistry
@@ -54,6 +55,26 @@ def _snapshot(root: Path) -> dict[str, bytes]:
         path.relative_to(root).as_posix(): path.read_bytes()
         for path in root.rglob("*")
         if path.is_file()
+    }
+
+
+def _compiled_vault(tmp_path):
+    """A quiet in-scope Vault (no broken links, no orphans) so cards are the only items."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Area" / "Clean.md").write_text("# Clean\n[[Clean2]]", encoding="utf-8")
+    (root / "Area" / "Clean2.md").write_text("# Clean2\n[[Clean]]", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="compiled")
+    register_contexts(registry, config, DEFINITIONS)
+    return registry, config, root
+
+
+def _stale_paths(result) -> set[str]:
+    return {
+        row["path"]
+        for row in result["items"]
+        if row.get("kind") == "compiled_card_stale"
     }
 
 
@@ -154,6 +175,147 @@ def test_cli_review_json_and_scope(vault):
     assert result["status"] == "attention"
     assert all(item["context_id"] in (None, "research:area") for item in result["items"])
     assert format_review_agenda(result).startswith("# 复查议程")
+
+
+def test_scope_change_is_incomparable_and_never_confirms_resolution(vault):
+    """Changing a Context's scope observes a different source set; that is not a fix.
+
+    Vanished items may simply have left the scope, so the comparison must be refused
+    rather than reported as resolved.
+    """
+    registry, config, root = vault
+    first = review_agenda(registry, config)
+    assert first["delta"]["comparable"] is False  # no previous entry yet
+    assert first["basis"]["context_revision"] == 1
+    assert first["basis"]["definitions_fingerprint"]
+
+    # Same notes, same contents: only the declared scope changes.
+    moved = json.loads(json.dumps(DEFINITIONS))
+    moved["contexts"][0]["scopes"] = ["Out"]
+    register_contexts(registry, config, moved, expected_revision=1)
+
+    second = review_agenda(registry, config)
+    assert second["basis"]["complete"] is True
+    assert second["delta"]["comparable"] is False
+    assert second["delta"]["incomparable_reason"] == "context_definitions_changed"
+    assert second["delta"]["resolved_item_ids"] == []
+    assert second["delta"]["resolved_suppressed"] > 0
+    # The notes were never touched.
+    assert (root / "Area" / "Broken.md").read_text(encoding="utf-8").endswith("[[Gone]]")
+
+
+def test_diagnostics_version_change_is_incomparable(vault):
+    """Findings from different diagnostic rules are not comparable either."""
+    registry, config, _ = vault
+    review_agenda(registry, config)
+    ledger = registry.vault_state_dir(config) / "review_ledger.jsonl"
+    entry = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    entry["fingerprint"] = "unchanged-marker"
+    entry["basis"]["diagnostics_version"] = "0"
+    ledger.write_text(json.dumps(entry) + "\n", encoding="utf-8")
+
+    again = review_agenda(registry, config)
+    assert again["delta"]["comparable"] is False
+    assert again["delta"]["incomparable_reason"] == "diagnostics_version_changed"
+
+
+def test_incomplete_review_exits_nonzero_like_tick_and_coverage(tmp_path):
+    """A scheduler reading only the exit code must not see a truncated check as success."""
+    root = tmp_path / "vault"
+    (root / "Area").mkdir(parents=True)
+    (root / "Out").mkdir()
+    (root / "Area" / "Clean.md").write_text("# Clean\n[[Clean2]]", encoding="utf-8")
+    (root / "Area" / "Clean2.md").write_text("# Clean2\n[[Clean]]", encoding="utf-8")
+    registry = VaultRegistry(tmp_path / "state")
+    config = registry.attach(root, name="exitcode")
+    register_contexts(registry, config, DEFINITIONS)
+    # Registered first, then made unreadable - the realistic degradation path. It lives
+    # outside the scope so the agenda is genuinely empty, not merely attention-worthy.
+    (root / "Out" / "not-utf8.md").write_bytes(b"\xff\xfe\x00bad bytes")
+
+    cli = Path(__file__).resolve().parent.parent / "scripts" / "knowledge_router.py"
+    run = subprocess.run(
+        [
+            sys.executable,
+            str(cli),
+            "--state-root",
+            str(registry.state_root),
+            "contexts",
+            "review",
+            "--no-record",
+            "--vault",
+            config.id,
+            "--json",
+        ],
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+    )
+    assert run.returncode == 2, run.stdout + run.stderr
+    result = json.loads(run.stdout)
+    assert result["status"] == "incomplete"
+    assert result["scan_incomplete"] is True
+
+
+def test_custom_out_root_card_is_detected_as_stale(tmp_path):
+    """A card saved with --out-root/--name is tracked by its recorded output path."""
+    registry, config, root = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    written = write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Different.md",
+        out_root=str(out_root),
+    )
+    assert written["registered"] is True
+    card = out_root / "Different.md"
+    assert card.is_file()
+
+    assert _stale_paths(review_agenda(registry, config, record=False)) == set()
+
+    # A scoped source changes: the registered card must now be reported by its real path.
+    (root / "Area" / "Topic.md").write_text("# Topic\n[[Missing]] changed", encoding="utf-8")
+    stale = review_agenda(registry, config, record=False)
+    item = next(row for row in stale["items"] if row["kind"] == "compiled_card_stale")
+    assert item["code"] == "compiled_card_stale"
+    assert item["path"] == str(card.resolve())
+    assert item["changed_source_count"] >= 1
+    assert str(card.resolve()) in _stale_paths(stale)
+
+
+def test_deleted_registered_card_is_reported_not_ignored(tmp_path):
+    """A card that disappeared must be surfaced, not silently dropped."""
+    registry, config, _ = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Gone.md",
+        out_root=str(out_root),
+    )
+    (out_root / "Gone.md").unlink()
+
+    result = review_agenda(registry, config, record=False)
+    codes = {row.get("code") for row in result["items"]}
+    assert "compiled_card_missing" in codes
+
+
+def test_rescoping_a_context_marks_its_card_scope_changed(tmp_path):
+    """A card built for the old scope must not be treated as current."""
+    registry, config, _ = _compiled_vault(tmp_path)
+    out_root = tmp_path / "custom_cards"
+    out_root.mkdir()
+    write_compiled_card(
+        registry, config, "research:area", "# Area\nbody", name="Scoped.md",
+        out_root=str(out_root),
+    )
+    moved = json.loads(json.dumps(DEFINITIONS))
+    moved["contexts"][0]["scopes"] = ["Out"]
+    (tmp_path / "vault" / "Out").mkdir()
+    (tmp_path / "vault" / "Out" / "Other.md").write_text("# Other\nbody", encoding="utf-8")
+    register_contexts(registry, config, moved, expected_revision=1)
+
+    result = review_agenda(registry, config, record=False)
+    codes = {row.get("code") for row in result["items"]}
+    assert "compiled_card_scope_changed" in codes
 
 
 def test_smaller_display_limit_does_not_fake_resolutions(vault):
@@ -280,6 +442,30 @@ def test_delta_is_incomparable_against_a_pre_fix_ledger_entry(vault):
     result = review_agenda(registry, config, limit=20)
     assert result["delta"]["comparable"] is False
     assert result["delta"]["incomparable_reason"] == "previous_basis_not_full"
+    assert result["delta"]["resolved_item_ids"] == []
+    assert result["delta"]["resolved_suppressed"] == 1
+
+
+def test_basis_without_semantic_keys_is_incomparable(vault):
+    """A full basis from before the fingerprint existed cannot confirm resolutions.
+
+    Those entries recorded the item set but nothing identifying *what they observed*, so
+    they must not be blamed on a definitions change either.
+    """
+    registry, config, _ = vault
+    review_agenda(registry, config, limit=20)
+    ledger = registry.vault_state_dir(config) / "review_ledger.jsonl"
+    entry = json.loads(ledger.read_text(encoding="utf-8").splitlines()[-1])
+    entry["item_ids"] = ["stale-id"]
+    entry["basis"].pop("definitions_fingerprint", None)
+    entry["basis"].pop("diagnostics_version", None)
+    ledger.write_text(
+        json.dumps(entry, ensure_ascii=False, sort_keys=True) + "\n", encoding="utf-8"
+    )
+
+    result = review_agenda(registry, config, limit=20)
+    assert result["delta"]["comparable"] is False
+    assert result["delta"]["incomparable_reason"] == "previous_basis_not_semantic"
     assert result["delta"]["resolved_item_ids"] == []
     assert result["delta"]["resolved_suppressed"] == 1
 

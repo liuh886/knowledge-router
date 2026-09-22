@@ -99,6 +99,57 @@ def test_relative_path_form_resolves_next_to_the_note():
     assert decision.destination == "Area/Sub/Note.md"
 
 
+def test_parent_directory_relative_link_resolves():
+    """`[[../Target]]` from a subfolder points at the sibling of the folder.
+
+    This used to stay unresolved because `PurePosixPath` kept the `..` segment, so the
+    candidate was `Area/Sub/../Target` and never matched the indexed `Area/Target.md`.
+    """
+    resolver = _resolver({"Area/Sub/Source.md": "", "Area/Target.md": ""})
+    decision = _decide(resolver, "Area/Sub/Source.md", "../Target")
+    assert decision.status == STATUS_RESOLVED
+    assert decision.level == LEVEL_RELATIVE
+    assert decision.destination == "Area/Target.md"
+
+
+def test_same_directory_explicit_link_is_not_demoted_to_a_bare_name():
+    """`[[./Target]]` is an explicit path, so a same-named note elsewhere must not win."""
+    resolver = _resolver(
+        {"Area/Source.md": "", "Area/Target.md": "", "Elsewhere/Target.md": ""}
+    )
+    decision = _decide(resolver, "Area/Source.md", "./Target")
+    assert decision.status == STATUS_RESOLVED
+    assert decision.level == LEVEL_RELATIVE
+    assert decision.destination == "Area/Target.md"
+
+
+def test_relative_link_that_escapes_the_vault_stays_unresolved():
+    """A `..` that would leave the Vault is not silently matched to anything."""
+    resolver = _resolver({"Source.md": "", "Target.md": ""})
+    decision = _decide(resolver, "Source.md", "../Target")
+    assert decision.status == STATUS_UNRESOLVED
+    assert decision.destination is None
+
+
+def test_vault_root_path_still_resolves_from_a_subfolder():
+    """A vault-absolute path is tried after the note-relative one fails."""
+    resolver = _resolver({"Area/Sub/Source.md": "", "Area/Target.md": ""})
+    decision = _decide(resolver, "Area/Sub/Source.md", "Area/Target")
+    assert decision.status == STATUS_RESOLVED
+    assert decision.level == LEVEL_VAULT_PATH
+    assert decision.destination == "Area/Target.md"
+
+
+def test_parent_directory_relative_asset_resolves():
+    """Non-Markdown targets keep their extension and resolve the same way."""
+    resolver = _resolver(
+        {"Area/Sub/Source.md": ""}, assets=["Area/Figure 1.png"]
+    )
+    decision = _decide(resolver, "Area/Sub/Source.md", "../Figure 1.png")
+    assert decision.status == STATUS_RESOLVED
+    assert decision.destination == "Area/Figure 1.png"
+
+
 def test_shared_filename_stays_ambiguous_because_resolution_is_undocumented():
     """Obsidian documents link *creation*; a pre-existing bare duplicate stays ambiguous."""
     resolver = _resolver(

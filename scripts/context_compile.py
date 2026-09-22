@@ -20,9 +20,22 @@ from typing import Any
 from capture_broker import create_capture_plan
 from context_brief import brief_context
 from context_followups import list_followups
+from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
+from fts_indexer import scan_notes
 from link_graph import load_link_graph, scope_anchors, select_context
-from registry import VaultConfig, VaultRegistry, atomic_text_write
+from registry import (
+    FileLock,
+    VaultConfig,
+    VaultRegistry,
+    atomic_json_write,
+    atomic_text_write,
+)
+
+# Registry of cards written to the external compiled area. Without it, staleness was
+# guessed from the default directory and filename, so a card saved with `--out-root` or
+# `--name` was invisible to review.
+_CARD_REGISTRY = "compiled_cards.json"
 
 _COMPILE_DIR = "_compiled"
 _PLACEHOLDER = "（结合下方来源，用要点写 3–7 条；不要写来源中不存在的结论）"
@@ -333,6 +346,90 @@ def _render_card(context: dict[str, Any], content: str, title: str) -> str:
     return "\n".join(header) + "\n" + _strip_leading_heading(content).strip() + "\n"
 
 
+def definitions_fingerprint(contexts: list[dict[str, Any]]) -> str:
+    """Fingerprint what a Context definition observes, so drift is detectable.
+
+    Lives here rather than in review because cards record it too: a card whose Context
+    was re-scoped is no longer trustworthy even if every source file is byte-identical.
+    """
+    material = [
+        {
+            "id": row.get("id"),
+            "type": row.get("type"),
+            "scopes": sorted(row.get("scopes") or ()),
+            "aliases": sorted(row.get("aliases") or ()),
+            "include": sorted(row.get("include") or ()),
+            "exclude": sorted(row.get("exclude") or ()),
+            "tags": sorted(row.get("tags") or ()),
+            "project_ids": sorted(str(item) for item in (row.get("project_ids") or ())),
+            "maintenance": row.get("maintenance") or {},
+        }
+        for row in sorted(contexts, key=lambda item: str(item.get("id")))
+    ]
+    payload = json.dumps(material, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(payload.encode()).hexdigest()
+
+
+def scoped_source_dependencies(
+    config: VaultConfig, context: dict[str, Any], scan=None
+) -> dict[str, str]:
+    """Return ``{path: checksum}`` for the notes a Context currently observes."""
+    report = scan or scan_notes(config.root_path)
+    return {
+        record.path: record.checksum
+        for record in report.records
+        if note_in_context(record.path, extract_tags(record.content), context)
+    }
+
+
+def _registry_path(registry: VaultRegistry, config: VaultConfig) -> Path:
+    return registry.vault_state_dir(config) / _CARD_REGISTRY
+
+
+def load_compiled_cards(
+    registry: VaultRegistry, config: VaultConfig
+) -> list[dict[str, Any]]:
+    """Read the external card registry; a damaged registry never invents entries."""
+    path = _registry_path(registry, config)
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    if not isinstance(data, dict) or data.get("vault_id") != config.id:
+        return []
+    cards = data.get("cards")
+    return [row for row in cards if isinstance(row, dict)] if isinstance(cards, list) else []
+
+
+def record_compiled_card(
+    registry: VaultRegistry, config: VaultConfig, record: dict[str, Any]
+) -> None:
+    """Upsert one card record, keyed by (context_id, path), under the state lock."""
+    state = registry.vault_state_dir(config)
+    with registry.guard_vault_state(config) as guard:
+        with FileLock(state / ".compiled-cards.lock", pinned_parent=guard):
+            cards = [
+                row
+                for row in load_compiled_cards(registry, config)
+                if not (
+                    row.get("context_id") == record["context_id"]
+                    and row.get("path") == record["path"]
+                )
+            ]
+            cards.append(record)
+            cards.sort(key=lambda row: (str(row.get("context_id")), str(row.get("path"))))
+            atomic_json_write(
+                _registry_path(registry, config),
+                {
+                    "schema_version": 1,
+                    "vault_id": config.id,
+                    "cards": cards,
+                },
+            )
+
+
 def write_compiled_card(
     registry: VaultRegistry,
     config: VaultConfig,
@@ -368,6 +465,22 @@ def write_compiled_card(
     card_title = title or context["name"]
     body = _render_card(context, content, card_title)
     atomic_text_write(target, body)
+    dependencies = scoped_source_dependencies(config, context)
+    record = {
+        "context_id": context["id"],
+        "context_name": context["name"],
+        "name": filename,
+        "path": str(target),
+        "compiled_area": str(root),
+        "written_at": datetime.now(UTC).isoformat(),
+        "card_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "definitions_fingerprint": definitions_fingerprint(
+            version["definitions"]["contexts"]
+        ),
+        "source_dependencies": dependencies,
+        "source_count": len(dependencies),
+    }
+    record_compiled_card(registry, config, record)
     return {
         "schema_version": 1,
         "vault_id": config.id,
@@ -376,11 +489,14 @@ def write_compiled_card(
         "compiled_area": str(root),
         "path": str(target),
         "replaced": existed,
-        "card_sha256": hashlib.sha256(body.encode("utf-8")).hexdigest(),
+        "card_sha256": record["card_sha256"],
+        "source_count": record["source_count"],
+        "registered": True,
         "vault_writes": 0,
         "meaning": (
-            "Written outside the Vault; no Vault authorization is involved. Re-run compile "
-            "to refresh the scaffold after scoped sources change."
+            "Written outside the Vault; no Vault authorization is involved. Its output path "
+            "and source dependencies are recorded in external state, so review can detect "
+            "staleness for custom --out-root/--name locations too."
         ),
     }
 

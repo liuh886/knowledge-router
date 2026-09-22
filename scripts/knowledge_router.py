@@ -844,7 +844,7 @@ def main() -> int:
                     json_output=args.json,
                     message=format_review_agenda(agenda),
                 )
-                return 0
+                return 2 if agenda["scan_incomplete"] else 0
             elif args.context_command == "converge":
                 if args.create:
                     if not args.target_path:
@@ -886,11 +886,13 @@ def main() -> int:
                     include_noisy=args.include_noisy,
                 )
                 summary = report.to_dict()
+                scan_incomplete = bool(scan.skipped_decode or scan.skipped_io)
                 result = {
                     "schema_version": 1,
                     "vault_id": config.id,
                     "scope": report.scope,
                     **summary,
+                    "scan_incomplete": scan_incomplete,
                     "items": [
                         item.to_dict() for item in report.items[: args.limit]
                     ],
@@ -907,7 +909,7 @@ def main() -> int:
                     json_output=args.json,
                     message=format_convergence(report),
                 )
-                return 0
+                return 2 if scan_incomplete else 0
             elif args.context_command == "compact":
                 result = compact_context_store(registry, config)
                 _emit(

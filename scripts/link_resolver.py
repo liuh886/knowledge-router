@@ -133,7 +133,36 @@ def normalize_target(value: str) -> str:
     """Strip alias/heading suffixes the way Obsidian treats a link target."""
     target = value.split("|", 1)[0].split("#", 1)[0].strip().replace("\\", "/")
     target = target.removesuffix(".md").strip("/")
-    return PurePosixPath(target).as_posix() if target else ""
+    if not target:
+        return ""
+    explicit_relative = target.startswith("./") or target.startswith("../")
+    normalized = PurePosixPath(target).as_posix()
+    # `PurePosixPath` drops a leading "./", which would silently demote an explicit
+    # same-directory link to a bare filename. Keep the marker so it is resolved as a path.
+    if explicit_relative and not normalized.startswith("."):
+        return f"./{normalized}"
+    return normalized
+
+
+def join_relative(parent: str, target: str) -> str | None:
+    """Resolve a note-relative target lexically, bounded to the Vault root.
+
+    `PurePosixPath` keeps `..` segments, so `Area/Sub` + `../Target` stayed
+    `Area/Sub/../Target` and never matched a real path. Normalise `.`/`..` instead.
+    Returns None when the target escapes the Vault; no filesystem access is involved,
+    matching how Obsidian resolves a path relative to the linking note.
+    """
+    segments: list[str] = []
+    for part in PurePosixPath(parent, target).parts:
+        if part in ("", "."):
+            continue
+        if part == "..":
+            if not segments:
+                return None
+            segments.pop()
+            continue
+        segments.append(part)
+    return "/".join(segments) if segments else None
 
 
 def extract_links(path: str, content: str) -> list[LinkReference]:
@@ -269,11 +298,12 @@ class LinkResolver:
 
         if has_path:
             # An explicit path must not be overridden by an unrelated bare-name match.
+            relative = join_relative(str(parent), target)
             levels: list[tuple[str, set[str]]] = [
                 (
                     LEVEL_RELATIVE,
-                    {self.matching[PurePosixPath(parent, target).as_posix().casefold()]}
-                    if PurePosixPath(parent, target).as_posix().casefold() in self.matching
+                    {self.matching[relative.casefold()]}
+                    if relative and relative.casefold() in self.matching
                     else set(),
                 ),
                 (

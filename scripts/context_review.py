@@ -16,12 +16,18 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from context_compile import compiled_card_name, compiled_root, suggest_target
+from context_compile import (
+    compiled_card_name,
+    compiled_root,
+    definitions_fingerprint,
+    load_compiled_cards,
+    suggest_target,
+)
 from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import scan_notes
 from registry import FileLock, VaultConfig, VaultRegistry
-from vault_doctor import NOISY_HINTS, diagnose_vault
+from vault_doctor import DIAGNOSTICS_VERSION, NOISY_HINTS, diagnose_vault
 
 _LEDGER = "review_ledger.jsonl"
 
@@ -137,22 +143,88 @@ def _quality_items(
 
 
 def _stale_card_items(
+    registry: VaultRegistry,
     config: VaultConfig,
     scan,
     contexts: list[dict[str, Any]],
     *,
     context_id: str | None,
 ) -> list[dict[str, Any]]:
-    """Flag compiled cards whose scoped sources changed after the card was written.
+    """Flag compiled cards that no longer match the sources they were built from.
 
-    Cards are deposited either inside the Vault (`_compiled/`) or - by default now -
-    in the external compiled area beside the Vault. Both locations are checked, so an
-    externally deposited card can still be detected as stale.
+    Registered cards are checked against their recorded output path and the exact source
+    checksums captured at write time, so a card saved with `--out-root` or `--name` is
+    covered too, and a deleted card is reported instead of silently ignored.
+
+    Cards written before the registry existed have no record, so the default location is
+    still guessed for those contexts as a fallback by modification time.
     """
     items: list[dict[str, Any]] = []
+    current_fingerprint = definitions_fingerprint(contexts)
+    registered: set[str] = set()
+    for record in load_compiled_cards(registry, config):
+        row = next((item for item in contexts if item["id"] == record.get("context_id")), None)
+        if row is None:
+            continue
+        if context_id and row["id"] != context_id:
+            continue
+        registered.add(row["id"])
+        card_path = str(record.get("path") or "")
+        recorded = record.get("source_dependencies") or {}
+        tags_by_path = {item.path: extract_tags(item.content) for item in scan.records}
+        current = {
+            item.path: item.checksum
+            for item in scan.records
+            if note_in_context(item.path, tags_by_path.get(item.path, ()), row)
+        }
+        added = sorted(set(current) - set(recorded))
+        removed = sorted(set(recorded) - set(current))
+        changed = sorted(
+            path for path in set(recorded) & set(current) if recorded[path] != current[path]
+        )
+        drift = len(added) + len(removed) + len(changed)
+        if not card_path or not Path(card_path).is_file():
+            code = "compiled_card_missing"
+            reason = "登记的编译卡已不在记录的输出路径上"
+        elif record.get("definitions_fingerprint") != current_fingerprint:
+            # Checked before drift: when the scope itself changed, calling the card "stale"
+            # would wrongly suggest that source files were edited.
+            code = "compiled_card_scope_changed"
+            reason = "Context 定义或范围在成卡后变化，卡片覆盖的已不是同一批来源"
+        elif drift:
+            code = "compiled_card_stale"
+            reason = (
+                f"成卡后范围内来源发生变化：新增 {len(added)}、删除 {len(removed)}、"
+                f"修改 {len(changed)}"
+            )
+        else:
+            continue
+        items.append(
+            {
+                "kind": "compiled_card_stale",
+                "context_id": row["id"],
+                "code": code,
+                "reason": reason,
+                "path": card_path or str(record.get("name")),
+                "added_sources": added[:5],
+                "removed_sources": removed[:5],
+                "changed_sources": changed[:5],
+                "changed_source_count": drift,
+                "suggestion": (
+                    f"contexts compile {row['id']} --save --content-file <draft>"
+                    f" --out-root {record.get('compiled_area')}"
+                    f" --name {record.get('name')} --overwrite"
+                    "  # then review and re-save"
+                ),
+            }
+        )
+
     for row in contexts:
         if context_id and row["id"] != context_id:
             continue
+        if row["id"] in registered:
+            continue
+        # Fallback for cards written before output paths were recorded.
         in_vault = suggest_target(row)
         candidates: list[tuple[str, Path]] = [(in_vault, config.root_path / PurePosixPath(in_vault))]
         external_name = compiled_card_name(row)
@@ -309,7 +381,7 @@ def review_agenda(
         )
     scan = scan_notes(config.root_path)
     items.extend(_quality_items(config, contexts, scan, context_id=context_id))
-    items.extend(_stale_card_items(config, scan, contexts, context_id=context_id))
+    items.extend(_stale_card_items(registry, config, scan, contexts, context_id=context_id))
 
     for item in items:
         item["id"] = _item_id(item)
@@ -341,6 +413,9 @@ def review_agenda(
         "poll_truncated": bool(poll.get("output_truncated"))
         or int(poll.get("context_count", 0)) > int(poll.get("contexts_checked", 0)),
         "poll_items_shown": len(poll.get("items", ())),
+        "context_revision": version["revision"] if version else 0,
+        "definitions_fingerprint": definitions_fingerprint(contexts),
+        "diagnostics_version": DIAGNOSTICS_VERSION,
     }
     basis_reasons: list[str] = []
     if not contexts:
@@ -372,8 +447,22 @@ def review_agenda(
         incomparable_reason = "previous_basis_not_full"
     elif previous_basis.get("complete") is not True:
         incomparable_reason = "previous_basis_incomplete"
+    elif (
+        "definitions_fingerprint" not in previous_basis
+        or "diagnostics_version" not in previous_basis
+    ):
+        # An entry from before the semantic basis existed: a full item set, but nothing
+        # that identifies what it observed. Do not blame it on a definitions change.
+        incomparable_reason = "previous_basis_not_semantic"
     elif not basis["complete"]:
         incomparable_reason = "current_basis_incomplete"
+    elif previous_basis.get("definitions_fingerprint") != basis["definitions_fingerprint"]:
+        # The Context definitions, scopes or filters changed between runs, so the two
+        # agendas observed different source sets. A vanished item may have left the scope
+        # rather than been fixed.
+        incomparable_reason = "context_definitions_changed"
+    elif previous_basis.get("diagnostics_version") != basis["diagnostics_version"]:
+        incomparable_reason = "diagnostics_version_changed"
     comparable = incomparable_reason is None
     vanished = sorted(previous_ids - current_ids)
     delta = {

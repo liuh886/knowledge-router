@@ -189,3 +189,27 @@ design, so any count that depends on them is a report rather than a verdict; the
 convenience rather than a completeness proof; and convergence suggestions are evidence, not
 verdicts.
 
+## 2026-09-22 — P0 correctness closeout
+
+Four reproduced boundary defects from the roadmap review were re-verified as still open against the
+then-current code, and closed:
+
+- A Context scope change no longer reports vanished items as resolved. The review `basis` is now
+  semantic — Context revision, a `definitions_fingerprint` over scopes/filters/aliases/project
+  ids/maintenance, and the diagnostics version — and refuses the comparison with
+  `context_definitions_changed` / `diagnostics_version_changed`. Entries predating the semantic basis
+  report `previous_basis_not_semantic` rather than being misread as a definitions change.
+- An incomplete `contexts review` / `converge` now exits 2, like `contexts tick` / `coverage`.
+- Note-relative `../` and `./` links are normalised lexically and bounded to the Vault; a path that
+  would escape stays unresolved.
+- Every `--save` records its real output path plus `{source: checksum}`, so custom
+  `--out-root`/`--name` cards are detected as stale, scope-changed or missing — and a newly added
+  scoped source counts as drift, so new material reaches existing cards.
+
+Stated limits: the acceptance Vault contains zero `../` links, so that fix is proven only by synthetic
+tests; the card registry cannot retro-cover cards written before it existed, and those are
+deliberately not adopted because their true dependencies are unknown; a `converge` suggestion remains
+evidence, not a verdict.
+
+Suite: **236 tests**, ruff clean.
+

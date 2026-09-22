@@ -99,7 +99,29 @@ from host-specific activation gates.
       recall is served by `note_bigrams` plus a LIKE fallback, English by `notes_fts`. The schema
       version is part of the generation hash, so changing the layout rebuilds instead of
       silently reusing a stale index.
-- [x] `tests/` suite: **224 tests**, ruff- and bytecode-clean.
+- [x] `tests/` suite: **236 tests**, ruff- and bytecode-clean.
+
+## Correctness closeout (P0 of the roadmap review)
+
+Four reproduced boundary defects were re-verified as still open and then fixed:
+
+- [x] **Scope change no longer forges a resolution.** The review `basis` is semantic: it carries the
+      Context revision, a `definitions_fingerprint` (scopes/filters/aliases/project ids/maintenance)
+      and the `diagnostics_version`. Any change between runs refuses the comparison
+      (`context_definitions_changed`, `diagnostics_version_changed`) and moves vanished ids to
+      `resolved_suppressed`. Ledger entries predating the semantic basis report
+      `previous_basis_not_semantic` instead of being misread as a definitions change.
+- [x] **An incomplete review exits non-zero.** `contexts review` and `converge` return 2 when the
+      basis is incomplete, consistent with `contexts tick` and `contexts coverage`.
+- [x] **`../` note-relative links resolve.** Note-relative targets are normalised lexically, so
+      `[[../Target]]` from `Area/Sub/` finds `Area/Target.md`, `[[./Target]]` is not demoted to a bare
+      filename, and a path escaping the Vault stays unresolved. The packaged Vault used for
+      acceptance contains no such links, so this is verified by synthetic tests only.
+- [x] **Custom compiled-card outputs are tracked.** Each `--save` records the real output path, the
+      definitions fingerprint and the exact `{source: checksum}` set, so review reports
+      `compiled_card_stale` (including newly **added** sources), `compiled_card_scope_changed` or
+      `compiled_card_missing` for custom `--out-root`/`--name` locations. Pre-registry cards keep the
+      default-path mtime fallback and are not retro-adopted, because their dependencies are unknown.
 
 ## Open
 

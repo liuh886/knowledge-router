@@ -53,7 +53,7 @@ risking damage. KnowledgeRouter closes that gap with four properties:
 | Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
 | Unified operating status | `status --json` |
 
-All 33 modules are pure Python standard library. The full suite is **224 tests**. See
+All 33 modules are pure Python standard library. The full suite is **236 tests**. See
 [`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
 agent-facing command contract.
 
@@ -157,6 +157,33 @@ learn either index implementation. See [`DESIGN.md`](DESIGN.md) and
 
 Full details in [`references/safety_contract.md`](references/safety_contract.md).
 
+## Comparability and freshness
+
+A review agenda means nothing if two runs observed different things. Every ledger entry records a
+semantic `basis`: the Context revision, a `definitions_fingerprint` over each Context's
+scopes/filters/aliases/project bindings/maintenance, and the diagnostics version. If any of those
+changed between runs, the comparison is refused (`context_definitions_changed`,
+`diagnostics_version_changed`) and vanished items are moved to `resolved_suppressed` — a Context
+whose scope changed observes a different source set, so an item leaving the agenda may simply have
+left the scope. Entries written before the semantic basis report `previous_basis_not_semantic` rather
+than being blamed on a definitions change. An incomplete basis makes `contexts review` and
+`contexts converge` exit 2, matching `contexts tick` and `contexts coverage`, so an exit-code-only
+scheduler cannot mistake a truncated scan for a clean result.
+
+Compiled cards are tracked by what they were actually built from. Each `--save` records its real
+output path, the definitions fingerprint and the exact `{source path: checksum}` set in external
+state, so review reports `compiled_card_stale` (sources added, removed or edited), 
+`compiled_card_scope_changed`, or `compiled_card_missing` — including for custom
+`--out-root`/`--name` locations, which were previously invisible. Newly added scoped sources count as
+drift, so new material does reach existing cards. Cards written before the registry existed keep a
+default-path modification-time fallback and are deliberately **not** retro-adopted, because their
+true dependencies cannot be reconstructed.
+
+The external index is schema 5, which no longer builds the trigram table: it was created and
+populated but never queried, and cost roughly a third of the index size on a real Vault. Chinese
+recall is served by `note_bigrams` plus a LIKE fallback. The schema version is part of the generation
+hash, so a layout change rebuilds instead of silently reusing an older index.
+
 ---
 
 ## Layout
@@ -171,7 +198,7 @@ knowledge-router/
 ├── integrations/ductor/     # optional workspace bridge
 ├── references/              # architecture, safety, routing, context, operations
 ├── docs/                    # background research
-└── tests/                   # 224 tests
+└── tests/                   # 236 tests
 ```
 
 ## Deferred (explicitly)

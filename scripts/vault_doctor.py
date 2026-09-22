@@ -39,6 +39,11 @@ TRIAGE_REVIEW = "needs_review"
 # excluded from convergence by default, but always counted and never dropped.
 NOISY_HINTS = frozenset({TRIAGE_ZOTERO, TRIAGE_TEMPLATE})
 
+# Bump whenever link resolution or triage changes what a diagnostic means. Findings
+# compared across different versions are not comparable, so this travels in the review
+# basis instead of being assumed stable.
+DIAGNOSTICS_VERSION = "2"
+
 _ZOTERO_DIR = re.compile(r"zotero", re.IGNORECASE)
 _TEMPLATE_DIRS = frozenset({"template", "templates", "模板"})
 _PLACEHOLDER_TARGETS = frozenset(

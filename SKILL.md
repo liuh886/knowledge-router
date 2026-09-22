@@ -123,6 +123,11 @@ production state into an arbitrary location or another Vault.
   This writes into an external compiled area (default `<vault>_compiled/` beside the Vault;
   override with `--out-root`) and never touches the Vault, so no write policy is involved. A
   target inside the Vault or inside an Obsidian Vault is refused.
+  Every save records its real output path, the Context definitions fingerprint and the exact
+  `{source path: checksum}` set it was built from, so review can later report it as
+  `compiled_card_stale` (sources added, removed or edited), `compiled_card_scope_changed` (the
+  Context was re-scoped) or `compiled_card_missing` — for custom `--out-root`/`--name` locations too.
+  Cards written before this record existed keep a default-path modification-time fallback.
 - To write inside the Vault instead, use `--stage --content-file <path> --target <relative.md>`;
   the directory must already exist (no directory is created) and the copy is written only by
   `capture --commit --plan-id <id>` under an explicit `append-create` policy.
@@ -132,8 +137,15 @@ production state into an arbitrary location or another Vault.
   grouped by occurrence, maintained scopes only) and **in-scope orphans** into one prioritized
   list, then appends a durable entry to an external ledger. `counts_by_code` shows the composition
   and `--code` narrows the display only. Re-running reports `new_item_ids` and `resolved_item_ids`
-  deltas. The Vault is only read: nothing is repaired, deleted or rewritten, and unscoped findings
-  stay available through `quality`.
+  deltas. The basis is *semantic*: it carries the Context revision, a `definitions_fingerprint` over
+  each Context's scopes/filters/aliases and the diagnostics version, so a scope or rule change
+  between runs refuses the comparison (`context_definitions_changed`,
+  `diagnostics_version_changed`) instead of reporting a repair, and vanished ids move to
+  `resolved_suppressed`. Entries predating the semantic basis report `previous_basis_not_semantic`.
+  An incomplete basis returns `incomplete`, never `clear`, and the command **exits 2** in that case,
+  like `contexts tick` and `contexts coverage`, so a scheduler reading only the exit code cannot
+  mistake a truncated scan for a clean one. The Vault is only read: nothing is repaired, deleted or
+  rewritten, and unscoped findings stay available through `quality`.
 - Collapse repeated unresolved targets into one decision each with
   `contexts converge [--context ID] [--limit N] [--min-occurrences N] [--include-noisy] --vault
   <name> [--json]`. Names are grouped case-insensitively, machine-generated noise is excluded by
@@ -149,6 +161,19 @@ production state into an arbitrary location or another Vault.
   `append-create`.
 - Drop redundant per-revision binding snapshots from external state with `contexts compact
   --vault <name>`; historical definitions are preserved and the Vault is untouched.
+- Link diagnostics and `contexts links` share one resolver (`link_resolver.py`) and follow
+  Obsidian's documented behaviour: a target that carries a path is resolved as a path (normalised
+  relative to the note, then vault-relative), and a bare target by unique filename and then unique
+  alias. Non-Markdown targets must carry their extension. A note-relative path is normalised
+  lexically, so `.`/`..` work (`[[../Target]]` from `Area/Sub/` finds `Area/Target.md`) and a target
+  that would escape the Vault stays unresolved rather than being matched elsewhere. Each verdict
+  records the deciding level; genuinely ambiguous targets stay ambiguous and only carry a proximity
+  candidate, and an unresolved path whose basename is unique elsewhere is counted under
+  `unresolved_with_unique_basename_fallback` instead of being silently resolved.
+- Broken links carry a per-occurrence `triage_hint` (`zotero_generated`, `template_placeholder`,
+  `missing_asset_reference`, `needs_review`) plus a reason and `confidence: hint`. Hints are triage
+  aids only: no hint means a reference is safe to ignore, and no target is called actionable from its
+  name alone. The original totals (`broken_link_occurrences`, `broken_by_hint`) are always retained.
 
 - Search before answering Vault-specific questions:
   `python scripts/knowledge_router.py search "<query>" --vault <name> --json`
