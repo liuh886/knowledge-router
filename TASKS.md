@@ -238,3 +238,141 @@ Context is a purpose with a lifecycle, not a synonym for every folder. Inferred 
 active status or authorize writes. A preview is not a committed event, a detected follow-up is not a
 scheduled reminder, and a maintenance hook is not a running daemon. Existing source-protection and
 broker guarantees remain in force.
+
+## Roadmap delivery queue (from the landscape review)
+
+Research conclusions only become work when they are written here with a trigger, a deliverable and
+an acceptance condition. P0 and P1 are complete; P2 onward is queued.
+
+| # | Trigger | Deliverable | Acceptance | State |
+|---|---|---|---|---|
+| A | A review of the derived-artifact code finds a reproduced defect | Contract fix + regression test | The reproduction no longer occurs; suite green | **done** (2026-09-22) |
+| B | A user asks what is currently known about a research topic or project | Versioned knowledge page + evidence manifest + budgeted `contexts get` | Two real Contexts published with real citations, served as `current`, expandable to the original notes; another session/agent can read them | **done** (2026-09-22) |
+| C | A real need to keep a page current | One Context update loop: new material → impact found → draft revised → basis verified → new version published → next session reads it | A supporting and a conflicting source are added: the page changes where it should, stays stable where it should not, the reason is traceable, and a failed run is recoverable | queued |
+| D | The pilot shows which calls are actually repeated | One shared read snapshot across `search`/`brief`/`compile`/`review`; expensive scans moved off the new-session path | Same quality with lower measured end-to-end latency, token cost and update cost; no speed-up claimed from internal FTS time alone | queued |
+| E | A task or a user correction is worth reusing | Candidate lessons/methods proposed, tried, then promoted; retractable | A similar but unseen task makes fewer known mistakes; a wrong lesson can be withdrawn; generated answers are never re-approved as their own evidence | queued |
+| F | Profiling shows a real bottleneck at the current scale | Incremental indexing, layered budget, optional hybrid retrieval/reranking | Measured gain against a fixed baseline; complexity without measured gain is not kept | deferred |
+
+Explicit non-goals for now: a vector database, an always-on service, a separate memory system, and
+bulk placeholder creation. The orphan signal helps find content; it is not a to-do to drive to zero.
+
+## 2026-09-10 — Approved OpenCode execution batch
+
+User approved all ten tasks and requested OpenCode as implementation subagent, with
+Codex supervision and independent acceptance. Detailed acceptance and boundaries are
+in references/opencode-local-delivery.md; current decisions in DESIGN.md, results in
+EVALUATE.md. This batch refines the open mainline above; distribution stays deferred.
+
+- [x] OC-01 P0: Complete maintenance receipts, durable baseline/deltas and failure recovery.
+  - [x] Staged baseline promotion preserves the last successful baseline when a completion
+    receipt fails; a distinct whole-cycle lock serializes same-Vault callers.
+  - [x] Incomplete scans, stale audit-only indexes and failed runs remain non-clear and
+    expose durable receipts; quality increases carry bounded reason/delta findings.
+- [x] OC-02 P0: Verified initial Context maintenance policies and visible coverage.
+  - [x] `contexts coverage` reports registered/enabled/disabled-or-unconfigured/retired
+    Contexts and fails closed when Context state output is truncated.
+- [ ] OC-03 P0: Actual Ductor conversation integration, activation preflight and rollback.
+- [x] OC-04 P0: Full multi-Context preview/authorized capture/query lifecycle acceptance.
+  - [x] Dedicated CLI acceptance covers Daily + Contact + Project in one frozen event,
+    preview/no-write, append-create commit, idempotent retry, cited brief/history/state,
+    follow-up completion, logical retirement, and unchanged Contact/Project originals.
+  - OpenCode's separate test-only session was transport-blocked; Codex added and reviewed
+    the acceptance test without changing production lifecycle logic.
+- [x] OC-05 P0: Local source checkpoints and durable runtime backup/isolated restore.
+  - [x] Allowlisted source/runtime archives carry an integrity manifest and SHA-256
+    sidecar; rebuildable indexes/locks are explicit exclusions.
+  - [x] Restore is verification-first, isolated-target-only and exclusive-create;
+    failed verification/restore preserves live state and baselines.
+- [x] OC-06 P1: Follow-up delivery acknowledgments, retry/deduplication and completion.
+  - [x] Local JSONL sink delivery records pending/delivered/failed/cancelled receipts,
+    retries failed intents only when requested, deduplicates stable notification ids and
+    reconciles closed/replaced follow-ups. Remote transport delivery is a separate gate.
+- [x] OC-07 P1: Evidence-backed actionable quality queue and orphan-growth diagnosis.
+  - [x] `quality` now exposes a bounded Context-aware queue. Maintained-scope findings are
+    prioritized with context ids, reason/evidence/suggestion remain attached, and unscoped
+    additions plus archive/backup historical hints stay visible rather than being filtered.
+    Existing maintenance baselines provide the separate orphan-growth delta; no repair runs.
+- [x] OC-08 P1: Representative effect tests and repeated search/brief latency budgets.
+  - [x] Isolated acceptance covers Daily/Context, Contact/entity, Project, old-state archive
+    and explicit abstention cases. Recall@K, MRR, source citation coverage and abstention
+    precision are all asserted at 1.0; warm search repeats and process-inclusive search/
+    Context-brief timings are measured without turning one machine's timing into an SLA.
+- [x] OC-09 P1: Explicit persistent Context/project binding and progress capture preview.
+  - [x] Context definitions accept reviewed `project_ids`; registration rejects unknown ids,
+    briefs reuse exact bindings with explicit origin metadata, stale repository evidence remains
+    visible, and the existing broker still requires a preview before progress capture.
+- [x] OC-10 P1: Unified factual status and current operating documentation.
+  - [x] `status --json` now combines attachment/index facts, maintenance coverage, durable
+    receipts, last successful baseline, failed-run count, explicit delivery-not-configured
+    boundary and next action. README/SKILL/context/runtime references describe current behavior
+    and preserve historical evidence.
+
+Dispatch status: all ten tasks assigned to OpenCode. Two implementation attempts
+lost their prompt transport with fetch failed; no implementation files changed and
+no OC task had passed acceptance at the initial dispatch checkpoint. Session
+receipts and pending operations are in references/opencode-job.json and EVALUATE.md;
+the later OC-01/OC-02 acceptance is recorded below. Resolve bridge long-run/failed-job
+permission and cancellation handling before resuming any failed session.
+
+Acceptance update (2026-09-11): OpenCode completed the OC-01/OC-02 implementation
+slice in an isolated copy. Codex independently reviewed and integrated only the
+validated files. The local Router suite now passes 134 tests; live Vaults and the
+distribution repository remain untouched. A subsequent OpenCode hardening request
+was blocked twice by certificate verification, so the remaining OC-03 through OC-10
+tasks are still open and will be dispatched in bounded slices.
+
+Second acceptance update (2026-09-11): OC-05 recovery tools are now integrated locally;
+the full suite is **138 passed**. OC-04 remains open only for a dedicated Contact +
+Project scenario; OC-03 and OC-06 through OC-10 remain open. Distribution and production
+activation are still deliberately deferred.
+
+Third acceptance update (2026-09-11): OC-04's dedicated Contact + Project scenario and the
+OC-08 representative effect/performance acceptance are now green. The full local suite is
+**140 passed**; static checks and bytecode compilation pass. OC-03 and OC-06, OC-07, OC-09,
+and OC-10 remain open, with distribution still deferred.
+
+Fourth acceptance update (2026-09-11): OC-07's bounded Context-aware quality queue is now
+implemented and tested through both the pure analyzer and the `quality --json` CLI path. The
+full suite count will be refreshed after the next regression run; production Vaults and the
+distribution repository remain untouched.
+
+Fifth acceptance update (2026-09-11): OC-09's reviewed Context-to-project binding is now
+implemented and covered by the project catalog integration tests. Unknown ids fail at
+registration, exact ids are reused by Context briefs, and no inferred same-name relationship
+is created. OC-03 and OC-06 remain open; OC-10 is documentation/status consolidation.
+
+Sixth acceptance update (2026-09-11): The integrated local regression is **144 passed** with
+ruff and bytecode compilation clean. OC-04, OC-07, OC-08 and OC-09 are accepted locally;
+remaining work is the non-claimable Ductor live activation/rollback and delivery gate (OC-03),
+follow-up acknowledgments (OC-06), and unified current-status documentation (OC-10).
+
+Seventh acceptance update (2026-09-11): OC-10's unified `status --json` view is implemented
+and covered by receipt/baseline and CLI tests. The next full regression will refresh the count;
+only the Ductor live activation/rollback gate (OC-03) and follow-up delivery acknowledgments
+(OC-06) remain open in the ten-task batch; M4's broad live-scan latency budget and cross-Vault
+identity evaluation remain open before considering portable packaging.
+
+Eighth acceptance update (2026-09-11): Final local regression after the status view is
+**145 passed in 72.91 seconds**; ruff and bytecode compilation are clean. The only warning is
+the intentional duplicate ZIP entry in the tamper-refusal fixture. Production Vault, live
+Ductor activation, the M4 broad-scan/cross-Vault gates and the distribution repository remain
+untouched.
+
+Ninth acceptance update (2026-09-11): OC-06's explicit local delivery boundary is now green.
+`contexts deliver --sink ABSOLUTE.jsonl` writes pending then delivered/failed/cancelled
+receipts outside the Vault, deduplicates by stable notification id, supports opt-in failed
+retries and reconciles closed/replaced follow-ups. The maintenance status view reports the
+ledger when present and preserves the not-configured boundary otherwise. A repeatable
+process-inclusive Context latency tool and same-named cross-Vault identity test are also
+green. The remaining non-claimable gate is Ductor live activation/rollback and real remote
+transport delivery; distribution remains deferred.
+
+Tenth acceptance update (2026-09-19): M4 distribution packaging is complete. The stable local
+behavior was packaged into this repository (scripts, tests, the Ductor
+bridge, SKILL.md, portable references, and rewritten README/DESIGN/TASKS/EVALUATE plus
+pyproject/LICENSE/.gitignore). The packaged copy passes 151 tests and ruff in isolation, and a
+standalone CLI attach/search smoke test returned a cited result. The bridge gained an explicit
+absolute `KNOWLEDGE_ROUTER_ENTRYPOINT` override (relative paths rejected), raising the local
+suite to **153 passed**. The real-Vault retrieval fixture and the opencode operation log were
+not distributed; `runtime_layout.md` was sanitized. OC-03 remains an operational gate: no live
+Ductor process was found, so activation/rollback stays unexecuted.
