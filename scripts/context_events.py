@@ -13,7 +13,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Any
 
-from capture_broker import commit_capture_plan, create_capture_plan, load_capture_plan
+from capture_broker import create_capture_plan, load_capture_plan
 from context_manager import _scope, _under, discover_contexts
 from context_store import load_context_version
 from fts_indexer import scan_notes
@@ -71,9 +71,7 @@ def _publish(
     import uuid
 
     data = {"schema_version": 1, "vault_id": config.id, "event_id": event_id, **value}
-    payload = json.dumps({**data, "checksum": _hash(data)}, ensure_ascii=False).encode(
-        "utf-8"
-    )
+    payload = json.dumps({**data, "checksum": _hash(data)}, ensure_ascii=False).encode("utf-8")
     state = registry.vault_state_dir(config)
     temporary = f"context-event-tmp.{uuid.uuid4().hex}.json"
     with registry.guard_vault_state(config) as guard:
@@ -128,9 +126,7 @@ def preview_event(
     previous = _read(registry, config, event_id, "plan")
     if previous is not None:
         if previous["request_hash"] != _hash(request):
-            raise ValueError(
-                "Context event key is already bound to a different request"
-            )
+            raise ValueError("Context event key is already bound to a different request")
         return inspect_event(registry, config, event_id)
     version = load_context_version(registry, config)
     if state_change is not None:
@@ -167,10 +163,7 @@ def preview_event(
         idempotency_key=f"context:{event_id}",
     )
     # A collision suffix must still fit a single-note primary binding.
-    if not any(
-        _under(plan.relative_path, scope)
-        for scope in contexts[primary_context]["scopes"]
-    ):
+    if not any(_under(plan.relative_path, scope) for scope in contexts[primary_context]["scopes"]):
         raise ValueError("Frozen capture destination left the primary Context scope")
     stored = _publish(
         registry,
@@ -194,9 +187,7 @@ def preview_event(
     return inspect_event(registry, config, event_id)
 
 
-def inspect_event(
-    registry: VaultRegistry, config: VaultConfig, event_id: str
-) -> dict[str, Any]:
+def inspect_event(registry: VaultRegistry, config: VaultConfig, event_id: str) -> dict[str, Any]:
     event = _read(registry, config, event_id, "plan")
     if event is None:
         raise FileNotFoundError(f"Context event not found: {event_id}")
@@ -230,30 +221,35 @@ def inspect_event(
     }
 
 
-def commit_event(
-    registry: VaultRegistry, config: VaultConfig, event_id: str
-) -> dict[str, Any]:
-    from vault_service import sync_vault
+def commit_event(registry: VaultRegistry, config: VaultConfig, event_id: str) -> dict[str, Any]:
+    from mutation_service import commit_and_refresh
 
     event = inspect_event(registry, config, event_id)
     if event["completed"]:
         return event
-    # Broker revalidates policy, exact plan, source hash and idempotent recovery.
-    mutation = commit_capture_plan(
-        config.root_path, registry.vault_state_dir(config), event["plan_id"]
-    )
-    _publish(
+    execution = commit_and_refresh(
         registry,
         config,
-        event_id,
-        "applied",
-        {
-            "plan_id": event["plan_id"],
-            "mutation": mutation.to_dict(),
-            "context_ids": [c["id"] for c in event["context_links"]],
-        },
+        event["plan_id"],
+        on_applied=lambda mutation: _publish(
+            registry,
+            config,
+            event_id,
+            "applied",
+            {
+                "plan_id": event["plan_id"],
+                "mutation": mutation.to_dict(),
+                "context_ids": [c["id"] for c in event["context_links"]],
+            },
+        ),
     )
-    sync = sync_vault(registry, registry.resolve(config.id))
+    if execution["status"] == "applied_pending_index":
+        return {
+            **inspect_event(registry, config, event_id),
+            "index_error": execution["index_error"],
+            "message": execution["message"],
+        }
+    sync = execution["sync"]
     _publish(
         registry,
         config,
@@ -289,8 +285,7 @@ def context_history(
                 "path": applied["mutation"]["relative_path"],
                 "source_sha256_at_commit": applied["mutation"]["after_sha256"],
                 "current_source_verified": False,
-                "index_completed": _read(registry, config, event_id, "completed")
-                is not None,
+                "index_completed": _read(registry, config, event_id, "completed") is not None,
             }
         )
         record = records[-1]
@@ -298,9 +293,7 @@ def context_history(
             raw = secure_read_bytes(config.root_path, record["path"])
             record["current_source_sha256"] = hashlib.sha256(raw).hexdigest()
             record["current_source_verified"] = True
-            record["stale"] = (
-                record["current_source_sha256"] != record["source_sha256_at_commit"]
-            )
+            record["stale"] = record["current_source_sha256"] != record["source_sha256_at_commit"]
             record["source_status"] = "changed" if record["stale"] else "unchanged"
         except (OSError, ValueError):
             record["current_source_sha256"] = None

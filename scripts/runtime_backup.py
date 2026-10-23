@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """OC-05: small safe source checkpoint and durable runtime backup/isolated restore.
 
-Router-owned state only; never human Vault content. Backups live under an
+Router-owned state only; the Vault itself is never traversed. Frozen edit plans
+can contain complete original source bytes for recovery. Backups live under an
 explicit caller-provided backup root. Archives carry a per-file integrity
 manifest plus a sidecar SHA-256. Only allowlisted relative entries are stored;
 traversal and reparse/symlink objects are rejected. Archives are created
@@ -32,8 +33,9 @@ _MANIFEST_NAME = "MANIFEST.json"
 _LABEL_RE = re.compile(r"[A-Za-z0-9._-]{1,64}")
 _PLAN_RE = re.compile(r"plan\.[A-Za-z0-9._-]{1,128}\.json")
 _EVENT_RE = re.compile(r"context-event\.[a-f0-9]{32}\.(plan|applied|completed)\.json")
+_WORKFLOW_RE = re.compile(r"workflow\.[a-f0-9]{64}\.json")
 
-_SOURCE_ALLOWED_DIRS = {"scripts", "tests", "integrations", "references"}
+_SOURCE_ALLOWED_DIRS = {"scripts", "tests", "integrations", "references", "docs"}
 _SOURCE_ALLOWED_SUFFIXES = {".py", ".md", ".json"}
 _SOURCE_ALLOWED_ROOT_FILES = {
     "SKILL.md",
@@ -41,6 +43,8 @@ _SOURCE_ALLOWED_ROOT_FILES = {
     "DESIGN.md",
     "TASKS.md",
     "EVALUATE.md",
+    "pyproject.toml",
+    "LICENSE",
 }
 # Rebuildable projections and transient files are identified, never archived.
 _CACHE_NAMES = {"taxonomy.json"}
@@ -78,11 +82,7 @@ def _ensure_dir_chain_under_base(base: Path, target: Path) -> Path:
         except FileNotFoundError:
             candidate.mkdir()
             info = candidate.lstat()
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or stat.S_ISLNK(info.st_mode)
-            or is_reparse(info)
-        ):
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or is_reparse(info):
             raise ValueError(f"State directories cannot be links or reparse points: {candidate}")
         current = candidate
     return current.resolve()
@@ -114,11 +114,7 @@ def _require_backup_root(backup_root: Path) -> Path:
 
 def _safe_read_file(path: Path) -> bytes:
     info = path.lstat()
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or stat.S_ISLNK(info.st_mode)
-        or is_reparse(info)
-    ):
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or is_reparse(info):
         raise ValueError(f"Refusing link/reparse/non-regular file: {path}")
     if info.st_nlink > 1:
         raise ValueError(f"Hard-linked targets are not allowed: {path}")
@@ -150,7 +146,7 @@ def _is_allowed_runtime_entry(relative: str, vault_id: str) -> bool:
     prefix = f"{vault_id}/"
     if not relative.startswith(prefix):
         return False
-    name = relative[len(prefix):]
+    name = relative[len(prefix) :]
     if "/" in name or not name:
         return False
     if name in {
@@ -159,9 +155,15 @@ def _is_allowed_runtime_entry(relative: str, vault_id: str) -> bool:
         "maintenance_cycle.jsonl",
         "maintain_audit.jsonl",
         "mutations.sqlite3",
+        "compiled_cards.json",
+        "knowledge_pages.json",
+        "review_ledger.jsonl",
+        "context_delivery.jsonl",
     }:
         return True
-    return bool(_PLAN_RE.fullmatch(name) or _EVENT_RE.fullmatch(name))
+    return bool(
+        _PLAN_RE.fullmatch(name) or _EVENT_RE.fullmatch(name) or _WORKFLOW_RE.fullmatch(name)
+    )
 
 
 def _is_allowed_source_entry(relative: str) -> bool:
@@ -187,7 +189,9 @@ def _is_allowed_source_entry(relative: str) -> bool:
 def _zip_atomic(
     backup_root: Path, final_name: str, files: list[tuple[str, bytes]], manifest: dict[str, Any]
 ) -> Path:
-    manifest_bytes = (json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    manifest_bytes = (
+        json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8")
     tmp_name = f".{final_name}.{uuid.uuid4().hex}.tmp"
     tmp_path = backup_root / tmp_name
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_BINARY", 0)
@@ -286,8 +290,7 @@ def create_source_checkpoint(
     # Deterministic order for reproducible manifests.
     files.sort(key=lambda item: item[0])
     entries = [
-        {"path": name, "sha256": _digest_bytes(data), "size": len(data)}
-        for name, data in files
+        {"path": name, "sha256": _digest_bytes(data), "size": len(data)} for name, data in files
     ]
     manifest = {
         "schema_version": _SCHEMA_VERSION,
@@ -373,8 +376,7 @@ def create_runtime_backup(
         files.append((rel, data))
     files.sort(key=lambda item: item[0])
     entries = [
-        {"path": name, "sha256": _digest_bytes(data), "size": len(data)}
-        for name, data in files
+        {"path": name, "sha256": _digest_bytes(data), "size": len(data)} for name, data in files
     ]
     manifest = {
         "schema_version": _SCHEMA_VERSION,
@@ -406,11 +408,7 @@ def verify_backup_archive(archive: Path) -> dict[str, Any]:
     info = path.lstat() if path.exists() else None
     if info is None:
         raise FileNotFoundError(f"Backup archive does not exist: {path}")
-    if (
-        not stat.S_ISREG(info.st_mode)
-        or stat.S_ISLNK(info.st_mode)
-        or is_reparse(info)
-    ):
+    if not stat.S_ISREG(info.st_mode) or stat.S_ISLNK(info.st_mode) or is_reparse(info):
         raise ValueError(f"Backup archive must be a regular file: {path}")
     if info.st_nlink > 1:
         raise ValueError(f"Hard-linked archives are not allowed: {path}")
@@ -485,11 +483,7 @@ def restore_backup_archive(
     created_root = False
     if dest.exists():
         info = dest.lstat()
-        if (
-            not stat.S_ISDIR(info.st_mode)
-            or stat.S_ISLNK(info.st_mode)
-            or is_reparse(info)
-        ):
+        if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or is_reparse(info):
             raise ValueError(f"Restore target must be a directory: {dest}")
         existing = list(dest.iterdir())
         if existing:
@@ -563,4 +557,3 @@ def restore_backup_archive(
         "entry_count": len(written),
         "archive_sha256": report["archive_sha256"],
     }
-

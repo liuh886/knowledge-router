@@ -30,6 +30,8 @@ Every item must carry a marker. An unmarked item is rejected rather than silentl
 
 from __future__ import annotations
 
+from text_budget import estimate_tokens
+
 import hashlib
 import json
 import re
@@ -66,9 +68,7 @@ _SECTION_QUESTIONS = "未决问题"
 
 _ITEM = re.compile(r"^-\s+(?P<id>[A-Za-z]\w*)\.\s*(?P<body>.*)$")
 _SRC = re.compile(r"\[src:\s*(?P<refs>[^\]]+)\]")
-_CITATION = re.compile(
-    r"^(?P<path>[^#]+?)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$"
-)
+_CITATION = re.compile(r"^(?P<path>[^#]+?)(?:#L(?P<start>\d+)(?:-L?(?P<end>\d+))?)?$")
 _MARKER_EXCLUSIVE = re.compile(r"\[(inference|open)\]")
 
 
@@ -88,17 +88,6 @@ def pages_root(config: VaultConfig, out_root: str | None = None) -> Path:
     if not root.parent.is_dir():
         raise ValueError(f"Knowledge area parent must already exist: {root.parent}")
     return root
-
-
-def estimate_tokens(text: str) -> int:
-    """Rough, deliberately conservative token estimate for budget accounting.
-
-    CJK characters are counted as one token each and other characters as one per four, which
-    over-estimates Latin text rather than under-estimating a mixed-script prompt. Reported as an
-    estimate everywhere it is used; it is not a tokenizer.
-    """
-    cjk = sum(1 for char in text if "\u3400" <= char <= "\u9fff" or "\u3000" <= char <= "\u303f")
-    return cjk + (len(text) - cjk + 3) // 4
 
 
 @dataclass(frozen=True)
@@ -209,22 +198,14 @@ def parse_draft(text: str, *, title: str = "") -> PageDraft:
 
         if section == _SECTION_QUESTIONS:
             if sources:
-                raise DraftError(
-                    f"{claim_id} is an open question and cannot carry citations"
-                )
+                raise DraftError(f"{claim_id} is an open question and cannot carry citations")
             questions.append(text_only)
             continue
 
         if exclusive:
-            kind = (
-                CLAIM_INFERENCE
-                if exclusive.group(1) == "inference"
-                else CLAIM_CONFLICT
-            )
+            kind = CLAIM_INFERENCE if exclusive.group(1) == "inference" else CLAIM_CONFLICT
             if kind == CLAIM_CONFLICT:
-                raise DraftError(
-                    f"{claim_id} is marked [open] inside '{_SECTION_CLAIMS}'"
-                )
+                raise DraftError(f"{claim_id} is marked [open] inside '{_SECTION_CLAIMS}'")
             claims.append(Claim(claim_id=claim_id, text=text_only, kind=kind))
             continue
 
@@ -252,9 +233,7 @@ def parse_draft(text: str, *, title: str = "") -> PageDraft:
 def _resolve_citations(scan, claims: tuple[Claim, ...]) -> tuple[Claim, ...]:
     """Attach checksums and line bounds, refusing any citation that cannot be verified."""
     by_path = {record.path: record for record in scan.records}
-    line_counts = {
-        record.path: len(record.content.splitlines()) or 1 for record in scan.records
-    }
+    line_counts = {record.path: len(record.content.splitlines()) or 1 for record in scan.records}
     resolved: list[Claim] = []
     for claim in claims:
         citations: list[Citation] = []
@@ -334,8 +313,7 @@ def load_page_registry(registry: VaultRegistry, config: VaultConfig) -> dict[str
         }
     pages = data.get("pages")
     if not isinstance(pages, list) or any(
-        not isinstance(row, dict) or any(key not in row for key in _PAGE_REQUIRED)
-        for row in pages
+        not isinstance(row, dict) or any(key not in row for key in _PAGE_REQUIRED) for row in pages
     ):
         return {
             "state": REGISTRY_INVALID,
@@ -352,12 +330,12 @@ def load_pages(registry: VaultRegistry, config: VaultConfig) -> list[dict[str, A
 
 
 def load_page(registry: VaultRegistry, config: VaultConfig, page_id: str) -> dict[str, Any] | None:
-    return next((row for row in load_pages(registry, config) if row.get("page_id") == page_id), None)
+    return next(
+        (row for row in load_pages(registry, config) if row.get("page_id") == page_id), None
+    )
 
 
-def find_page(
-    registry: VaultRegistry, config: VaultConfig, selector: str
-) -> dict[str, Any] | None:
+def find_page(registry: VaultRegistry, config: VaultConfig, selector: str) -> dict[str, Any] | None:
     """Find a page by id, by file stem, or by the Context it belongs to."""
     folded = selector.casefold()
     pages = load_pages(registry, config)
@@ -373,9 +351,7 @@ def find_page(
     return None
 
 
-def _record_page(
-    registry: VaultRegistry, config: VaultConfig, record: dict[str, Any]
-) -> None:
+def _record_page(registry: VaultRegistry, config: VaultConfig, record: dict[str, Any]) -> None:
     state = registry.vault_state_dir(config)
     with registry.guard_vault_state(config) as guard:
         with FileLock(state / ".knowledge-pages.lock", pinned_parent=guard):
@@ -385,11 +361,7 @@ def _record_page(
                     "Refusing to rewrite an unreadable page registry "
                     f"({existing['state']}: {existing['reason']}); fix it first"
                 )
-            pages = [
-                row
-                for row in existing["pages"]
-                if row.get("page_id") != record["page_id"]
-            ]
+            pages = [row for row in existing["pages"] if row.get("page_id") != record["page_id"]]
             pages.append(record)
             pages.sort(key=lambda row: str(row.get("page_id")))
             atomic_json_write(
@@ -502,9 +474,7 @@ def publish_page(
         raise ValueError("Page name must stay inside the knowledge area")
     existed = target.exists()
     if existed and not overwrite:
-        raise FileExistsError(
-            f"Page already exists: {target} (use --overwrite to replace)"
-        )
+        raise FileExistsError(f"Page already exists: {target} (use --overwrite to replace)")
 
     previous = load_page(registry, config, context["id"])
     sources = {
@@ -577,9 +547,7 @@ def page_status(
     if contexts is None:
         version = load_context_version(registry, config)
         contexts = version["definitions"]["contexts"] if version else []
-    context = next(
-        (row for row in contexts if row.get("id") == page.get("context_id")), None
-    )
+    context = next((row for row in contexts if row.get("id") == page.get("context_id")), None)
     recorded = page.get("sources") or {}
     if context is None:
         # The Context was retired: nothing observes it any more.
@@ -628,9 +596,7 @@ def page_status(
         "citation_drift_count": len(citation_drift),
         # A re-scoped Context means the page covers a different source set, so it is stale even
         # if every recorded file is byte-identical.
-        "stale": bool(
-            not exists or added or removed or changed or citation_drift or scope_changed
-        ),
+        "stale": bool(not exists or added or removed or changed or citation_drift or scope_changed),
         "scope_changed": scope_changed,
     }
 
@@ -772,9 +738,7 @@ def expand_claim(
     page = find_page(registry, config, page_id)
     if page is None:
         raise FileNotFoundError(f"No published page matches: {page_id}")
-    claim = next(
-        (row for row in page.get("claims", []) if str(row.get("id")) == claim_id), None
-    )
+    claim = next((row for row in page.get("claims", []) if str(row.get("id")) == claim_id), None)
     if claim is None:
         raise FileNotFoundError(f"Page {page['page_id']!r} has no claim {claim_id!r}")
 
@@ -831,9 +795,7 @@ def expand_claim(
 def format_page_pack(pack: dict[str, Any]) -> str:
     """Render a knowledge pack for a human reader."""
     if pack.get("status") == "unpublished":
-        return (
-            f"# 上下文包：{pack['context_id']}\n尚未发布知识页；未整理不等于没有知识。"
-        )
+        return f"# 上下文包：{pack['context_id']}\n尚未发布知识页；未整理不等于没有知识。"
     lines = [
         f"# 上下文包：{pack['context_id']}（版本 {pack['page_version']}）",
         f"状态 {pack['status']} · 预算 {pack['used_tokens']}/{pack['budget_tokens']} tokens"

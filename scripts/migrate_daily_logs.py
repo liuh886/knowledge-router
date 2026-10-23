@@ -1,48 +1,20 @@
 #!/usr/bin/env python3
-"""Daily Log Migration Engine: Deconstruct legacy daily logs into Quick Capture streams.
+"""Read-only legacy daily-log analysis; rewrite/relocation commits are retired.
 
-Extracts:
-  - Tasks (- [ ], - [x], - [> ]) -> 000_Inbox/todo.YYYY.md (grouped by ## YYYY-MM)
-  - Memos (- **...**, - Record ...) -> 000_Inbox/memo.YYYY.md (grouped by ## YYYY-MM)
-  - Ideas (- [idea:: ...], 💡 ...) -> 000_Inbox/idea.YYYY.md (grouped by ## YYYY-MM)
-  - Contact interactions -> 305_Contact/<Person>.md (appended to ## Log)
-  - Archives original files to 400_Archives/Legacy_Daily_Logs/
-
-Usage:
-  python scripts/migrate_daily_logs.py --vault "D:\\Documents\\zhihaol" [--dry-run] [--commit]
+Extracts task, memo, idea and contact candidates for a human-reviewed report.
+Use registered memory workflows for imports and retain original daily files.
 """
 
 from __future__ import annotations
 
 import argparse
-import glob
-import os
 import re
-import shutil
 import sys
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import datetime
 from pathlib import Path
-from typing import Any
 
-# Ensure local scripts can be imported
-sys.path.insert(0, str(Path(__file__).parent))
-try:
-    from triage_engine import (
-        ContactResolver,
-        FileLock,
-        TagClassifier,
-        append_contact_log,
-        atomic_text_write,
-    )
-except ImportError:
-    # Fallback minimal stubs if standalone
-    ContactResolver = None
-    TagClassifier = None
-    FileLock = None
-    append_contact_log = None
-    atomic_text_write = None
+from triage_engine import ContactResolver, TagClassifier
 
 
 @dataclass
@@ -199,21 +171,15 @@ class DailyLogParser:
             idea_match = re.search(r"-\s*\[idea::\s*(.*?)\]", line)
             if idea_match:
                 idea_text = idea_match.group(1).strip()
-                self._process_idea(
-                    idea_text, date_str, year, month_str, path, line_idx, plan
-                )
+                self._process_idea(idea_text, date_str, year, month_str, path, line_idx, plan)
                 continue
 
             if in_unified_log and (
-                "初步打算" in line
-                or "灵感" in line
-                or stripped.startswith("- **Idea")
+                "初步打算" in line or "灵感" in line or stripped.startswith("- **Idea")
             ):
                 cleaned = re.sub(r"^\s*-\s*(\*\*[^*]+\*\*:?)?\s*", "", line).strip()
                 if cleaned:
-                    self._process_idea(
-                        cleaned, date_str, year, month_str, path, line_idx, plan
-                    )
+                    self._process_idea(cleaned, date_str, year, month_str, path, line_idx, plan)
                     continue
 
             # 3. Check for memos under Unified Log (non-tasks, non-agent summaries)
@@ -429,7 +395,9 @@ def render_dry_run_report(plan: MigrationPlan) -> str:
     # Contact interactions
     lines.append("-" * 72)
     lines.append(f"👤 Contact Interactions Linked: {len(plan.contact_logs)} persons")
-    for person, entries in sorted(plan.contact_logs.items(), key=lambda x: len(x[1]), reverse=True)[:10]:
+    for person, entries in sorted(plan.contact_logs.items(), key=lambda x: len(x[1]), reverse=True)[
+        :10
+    ]:
         lines.append(f"   ▶ [[{person}]]: {len(entries)} interaction entries")
     if len(plan.contact_logs) > 10:
         lines.append(f"   ... and {len(plan.contact_logs) - 10} more contacts")
@@ -454,184 +422,33 @@ def render_dry_run_report(plan: MigrationPlan) -> str:
     return "\n".join(lines)
 
 
-def commit_migration(plan: MigrationPlan, archive_rel_dir: str = "400_Archives/Legacy_Daily_Logs") -> None:
-    vault_root = plan.vault_root
-    inbox_dir = vault_root / "000_Inbox"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-    archive_dir = vault_root / archive_rel_dir
-    archive_dir.mkdir(parents=True, exist_ok=True)
-
-    print("\n🚀 Beginning atomic commit...")
-
-    # 1. Group tasks by year and month
-    tasks_by_year_month: dict[int, dict[str, list[ExtractedTask]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    for t in plan.tasks:
-        tasks_by_year_month[t.year][t.month].append(t)
-
-    # 2. Write to todo.YYYY.md
-    for yr, months in sorted(tasks_by_year_month.items()):
-        todo_file = inbox_dir / f"todo.{yr}.md"
-        _merge_stream_file(
-            file_path=todo_file,
-            title=f"Todo {yr}",
-            capture_type="todo",
-            year=yr,
-            month_entries=months,
-        )
-        print(f"  ✅ Updated {todo_file.name} with {sum(len(v) for v in months.values())} tasks")
-
-    # 3. Write to memo.YYYY.md
-    memos_by_year_month: dict[int, dict[str, list[ExtractedMemo]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    for m in plan.memos:
-        memos_by_year_month[m.year][m.month].append(m)
-
-    for yr, months in sorted(memos_by_year_month.items()):
-        memo_file = inbox_dir / f"memo.{yr}.md"
-        _merge_stream_file(
-            file_path=memo_file,
-            title=f"Memo {yr}",
-            capture_type="memo",
-            year=yr,
-            month_entries=months,
-        )
-        print(f"  ✅ Updated {memo_file.name} with {sum(len(v) for v in months.values())} memos")
-
-    # 4. Write to idea.YYYY.md
-    ideas_by_year_month: dict[int, dict[str, list[ExtractedIdea]]] = defaultdict(
-        lambda: defaultdict(list)
-    )
-    for i in plan.ideas:
-        ideas_by_year_month[i.year][i.month].append(i)
-
-    for yr, months in sorted(ideas_by_year_month.items()):
-        idea_file = inbox_dir / f"idea.{yr}.md"
-        _merge_stream_file(
-            file_path=idea_file,
-            title=f"Idea {yr}",
-            capture_type="idea",
-            year=yr,
-            month_entries=months,
-        )
-        print(f"  ✅ Updated {idea_file.name} with {sum(len(v) for v in months.values())} ideas")
-
-    # 5. Append contact logs
-    if append_contact_log and plan.contact_logs:
-        lock_path = vault_root / ".knowledge_router" / "locks" / "contact.lock"
-        lock_path.parent.mkdir(parents=True, exist_ok=True)
-        appended_count = 0
-        for person, logs in plan.contact_logs.items():
-            for date_str, text in logs:
-                res = append_contact_log(
-                    vault_root,
-                    target=person,
-                    text=f"[{date_str}] {text}",
-                    lock_path=lock_path,
-                )
-                if res.get("status") == "success":
-                    appended_count += 1
-        print(f"  ✅ Appended {appended_count} interaction logs to 305_Contact/")
-
-    # 6. Safely move original daily logs to 400_Archives/Legacy_Daily_Logs
-    daily_base = vault_root / "100_Logs" / "daily"
-    moved_count = 0
-    for path in plan.daily_files:
-        rel = path.relative_to(daily_base)
-        dest = archive_dir / rel
-        dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.move(str(path), str(dest))
-        moved_count += 1
-
-    # Place a README in 100_Logs/daily to guide future references
-    legacy_readme = daily_base / "README.md"
-    legacy_readme.write_text(
-        f"---\ntitle: Daily Log System Migration Notice\ndate: {datetime.now().strftime('%Y-%m-%d')}\n---\n\n"
-        "# 🪵 Daily Log 系统迁移说明\n\n"
-        "原按日拆分的每日日记已全面打散解构并升级为流式捕获体系：\n\n"
-        "- 📋 **待办流水**: [[000_Inbox/todo.2026.md|todo.2026.md]] (持续自动同步 Google Calendar)\n"
-        "- 📝 **知识备忘**: [[000_Inbox/memo.2026.md|memo.2026.md]]\n"
-        "- 💡 **灵感闪念**: [[000_Inbox/idea.2026.md|idea.2026.md]]\n"
-        "- 👤 **人脉互动**: 沉淀至 [[300_Resources/305_Contact/|305_Contact/]] 对应人物卡片\n"
-        "- 📦 **历史档案**: 存量日记已安全归档至 [[400_Archives/Legacy_Daily_Logs/|Legacy_Daily_Logs/]]\n",
-        encoding="utf-8",
-    )
-    print(f"  ✅ Archived {moved_count} legacy files to {archive_rel_dir}")
-    print(f"  ✅ Left migration guidance in 100_Logs/daily/README.md")
-    print("\n🎉 Migration successfully completed with 0 data loss!")
-
-
-def _merge_stream_file(
-    file_path: Path,
-    title: str,
-    capture_type: str,
-    year: int,
-    month_entries: dict[str, list[Any]],
+def commit_migration(
+    plan: MigrationPlan, archive_rel_dir: str = "400_Archives/Legacy_Daily_Logs"
 ) -> None:
-    if file_path.is_file():
-        content = file_path.read_text(encoding="utf-8")
-    else:
-        content = (
-            f"---\n"
-            f'title: "{title}"\n'
-            f"date: {year}-01-01\n"
-            f"tags:\n"
-            f"  - capture/{capture_type}\n"
-            f"type: capture\n"
-            f"year: {year}\n"
-            f"---\n\n"
-            f"# {title}\n\n"
-        )
-
-    # Sort months chronologically
-    for month_str in sorted(month_entries.keys()):
-        entries = month_entries[month_str]
-        month_heading = f"## {month_str}"
-        month_match = re.search(rf"(?m)^##\s+{re.escape(month_str)}\s*$", content)
-
-        # Collect formatted lines
-        new_lines = []
-        for e in entries:
-            line_str = e.formatted_entry
-            # Deduplication: check if already in file
-            if line_str in content:
-                continue
-            new_lines.append(line_str)
-
-        if not new_lines:
-            continue
-
-        block = "\n".join(new_lines) + "\n"
-
-        if not month_match:
-            content = content.rstrip() + f"\n\n{month_heading}\n\n{block}"
-        else:
-            start_pos = month_match.end()
-            next_heading = re.search(r"(?m)^##\s+", content[start_pos:])
-            if next_heading:
-                insert_pos = start_pos + next_heading.start()
-                content = (
-                    content[:insert_pos].rstrip()
-                    + f"\n{block}\n"
-                    + content[insert_pos:].lstrip()
-                )
-            else:
-                content = content.rstrip() + f"\n{block}"
-
-    if atomic_text_write:
-        atomic_text_write(file_path, content)
-    else:
-        file_path.write_text(content, encoding="utf-8")
+    """Legacy relocation is retired; it cannot bypass registered mutation policies."""
+    raise PermissionError(
+        "Legacy rewrite/relocation commits are retired. Keep the dry-run report and "
+        "use registered inbox/contact workflows; original daily files must stay in place."
+    )
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Migrate legacy daily logs into quick capture streams.")
-    parser.add_argument("--vault", default=r"D:\Documents\zhihaol", help="Path to Obsidian vault")
-    parser.add_argument("--commit", action="store_true", help="Execute real migration (default is dry-run)")
-    parser.add_argument("--archive-dir", default="400_Archives/Legacy_Daily_Logs", help="Target archive folder")
+    parser = argparse.ArgumentParser(
+        description="Migrate legacy daily logs into quick capture streams."
+    )
+    parser.add_argument(
+        "--vault", required=True, help="Path to Obsidian vault (read-only analysis)"
+    )
+    parser.add_argument(
+        "--commit", action="store_true", help="Execute real migration (default is dry-run)"
+    )
+    parser.add_argument(
+        "--archive-dir", default="400_Archives/Legacy_Daily_Logs", help="Target archive folder"
+    )
     args = parser.parse_args()
+
+    if args.commit:
+        parser.error("Legacy relocation commits are retired; use registered memory workflows")
 
     vault_root = Path(args.vault)
     if not vault_root.is_dir():
@@ -648,7 +465,7 @@ def main() -> int:
         commit_migration(plan, archive_rel_dir=args.archive_dir)
     else:
         print("\n💡 NOTE: This was a DRY-RUN. No files were modified.")
-        print("To execute real migration, re-run with: python scripts/migrate_daily_logs.py --commit")
+        print("Use registered memory workflows for reviewed imports; originals remain in place.")
 
     return 0
 

@@ -3,10 +3,18 @@ import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
-from triage_engine import ContactResolver, append_contact_log, append_inbox_stream
+from triage_engine import ContactResolver
+from memory_service import append_contact_log, append_inbox_stream
+from registry import VaultRegistry
+
+
+def _writable(vault):
+    registry = VaultRegistry(vault.parent / "State")
+    return registry, registry.attach(vault, write_policy="append-create")
 
 
 def _create_mock_vault(root: Path) -> None:
+    (root / "000_Inbox").mkdir(parents=True, exist_ok=True)
     contact_dir = root / "300_Resources" / "305_Contact"
     contact_dir.mkdir(parents=True, exist_ok=True)
 
@@ -31,18 +39,14 @@ def _create_mock_vault(root: Path) -> None:
     # Note 2: with H1 title and no ## Log
     note2 = contact_dir / "Song Xuanyi 宋宣仪.md"
     note2.write_text(
-        "---\n"
-        "aliases: [Xiao Song]\n"
-        "---\n\n"
-        "# 小宋\n\n"
-        "团队成员\n",
+        "---\naliases: [Xiao Song]\n---\n\n# 小宋\n\n团队成员\n",
         encoding="utf-8",
     )
 
 
 def test_contact_search() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        vault = Path(tmp)
+        vault = Path(tmp) / "Vault"
         _create_mock_vault(vault)
         resolver = ContactResolver(vault)
 
@@ -64,29 +68,29 @@ def test_contact_search() -> None:
 
 def test_contact_append_with_existing_log() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        vault = Path(tmp)
+        vault = Path(tmp) / "Vault"
         _create_mock_vault(vault)
 
-        res = append_contact_log(vault, "许老师", "讨论降水模型评估指标")
+        res = append_contact_log(*_writable(vault), "许老师", "讨论降水模型评估指标")
         assert res["status"] == "success"
         assert res["canonical"] == "Xu ChongYu 许崇育"
 
         note = vault / "300_Resources" / "305_Contact" / "Xu ChongYu 许崇育.md"
         content = note.read_text(encoding="utf-8")
         assert "讨论降水模型评估指标" in content
-        # Ensure it was inserted before '## 备注'
+        # Appending preserves the existing source prefix; repeated sections are intentional.
         log_pos = content.find("## Log")
         entry_pos = content.find("讨论降水模型评估指标")
         remark_pos = content.find("## 备注")
-        assert log_pos < entry_pos < remark_pos
+        assert log_pos < remark_pos < entry_pos
 
 
 def test_contact_append_without_existing_log() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        vault = Path(tmp)
+        vault = Path(tmp) / "Vault"
         _create_mock_vault(vault)
 
-        res = append_contact_log(vault, "小宋", "同步数据准备进度")
+        res = append_contact_log(*_writable(vault), "小宋", "同步数据准备进度")
         assert res["status"] == "success"
         assert res["canonical"] == "Song Xuanyi 宋宣仪"
 
@@ -98,10 +102,10 @@ def test_contact_append_without_existing_log() -> None:
 
 def test_inbox_append_todo_with_auto_triage() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        vault = Path(tmp)
+        vault = Path(tmp) / "Vault"
         _create_mock_vault(vault)
 
-        res = append_inbox_stream(vault, "todo", "约许老师商量降水模型", year=2026)
+        res = append_inbox_stream(*_writable(vault), "todo", "约许老师商量降水模型", year=2026)
         assert res["status"] == "success"
         assert res["type"] == "todo"
 
@@ -116,16 +120,20 @@ def test_inbox_append_todo_with_auto_triage() -> None:
 
 def test_inbox_append_memo_and_idea() -> None:
     with tempfile.TemporaryDirectory() as tmp:
-        vault = Path(tmp)
+        vault = Path(tmp) / "Vault"
         _create_mock_vault(vault)
 
-        res_memo = append_inbox_stream(vault, "memo", "记录关于冰川流动速度的观察", year=2026)
+        res_memo = append_inbox_stream(
+            *_writable(vault), "memo", "记录关于冰川流动速度的观察", year=2026
+        )
         assert res_memo["status"] == "success"
         memo_file = vault / "000_Inbox" / "memo.2026.md"
         assert memo_file.is_file()
         assert "记录关于冰川流动速度的观察" in memo_file.read_text(encoding="utf-8")
 
-        res_idea = append_inbox_stream(vault, "idea", "探索大语言模型辅助审稿流程", year=2026)
+        res_idea = append_inbox_stream(
+            *_writable(vault), "idea", "探索大语言模型辅助审稿流程", year=2026
+        )
         assert res_idea["status"] == "success"
         idea_file = vault / "000_Inbox" / "idea.2026.md"
         assert idea_file.is_file()

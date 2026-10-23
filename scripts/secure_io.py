@@ -6,7 +6,7 @@ from __future__ import annotations
 import os
 import stat
 import time
-from contextlib import AbstractContextManager
+from contextlib import AbstractContextManager, ExitStack
 from pathlib import Path, PurePosixPath
 from typing import Any
 
@@ -17,17 +17,45 @@ def is_reparse(info: os.stat_result) -> bool:
     return bool(getattr(info, "st_file_attributes", 0) & _REPARSE_ATTRIBUTE)
 
 
-def validate_relative_path(
-    relative_path: str, *, allow_hidden: bool = False
-) -> PurePosixPath:
+def ensure_directory_tree(base: Path, target: Path) -> Path:
+    """Explicit provisioning only: create a bounded chain, refusing linked components."""
+    base = base.expanduser().resolve(strict=True)
+    target = target.expanduser().absolute()
+    try:
+        relative = target.relative_to(base)
+    except ValueError:
+        raise ValueError(f"Directory target must stay below its trusted base: {target}") from None
+    with ExitStack() as pins:
+        pins.enter_context(SecureParent(base, ".provision-anchor", allow_hidden=True))
+        current = base
+        for part in relative.parts:
+            if part in {"", ".", ".."}:
+                raise ValueError(f"Unsafe directory component: {part}")
+            candidate = current / part
+            try:
+                info = candidate.lstat()
+            except FileNotFoundError:
+                try:
+                    candidate.mkdir()
+                except FileExistsError:
+                    pass
+                info = candidate.lstat()
+            if not stat.S_ISDIR(info.st_mode) or stat.S_ISLNK(info.st_mode) or is_reparse(info):
+                raise ValueError(f"Directories cannot be links or reparse points: {candidate}")
+            relative_anchor = (candidate.relative_to(base) / ".provision-anchor").as_posix()
+            pins.enter_context(SecureParent(base, relative_anchor, allow_hidden=True))
+            current = candidate
+    return target
+
+
+def validate_relative_path(relative_path: str, *, allow_hidden: bool = False) -> PurePosixPath:
     relative = PurePosixPath(relative_path)
     if (
         relative.is_absolute()
         or not relative.parts
         or any(part in {"", ".", ".."} for part in relative.parts)
         or any(
-            (part.startswith(".") and not allow_hidden) or ":" in part
-            for part in relative.parts
+            (part.startswith(".") and not allow_hidden) or ":" in part for part in relative.parts
         )
     ):
         raise ValueError(f"Unsafe relative path: {relative_path}")
@@ -166,9 +194,7 @@ def _windows_open_raw(
 class SecureParent(AbstractContextManager["SecureParent"]):
     """Pin every parent component and open the final file relative to that chain."""
 
-    def __init__(
-        self, root: Path, relative_path: str, *, allow_hidden: bool = False
-    ) -> None:
+    def __init__(self, root: Path, relative_path: str, *, allow_hidden: bool = False) -> None:
         self.root = root.expanduser().resolve(strict=True)
         self.relative = validate_relative_path(relative_path, allow_hidden=allow_hidden)
         self.parent = self.root.joinpath(*self.relative.parts[:-1])
@@ -235,6 +261,7 @@ class SecureParent(AbstractContextManager["SecureParent"]):
         *,
         writable: bool,
         exclusive_writes: bool = True,
+        exclusive_readers: bool = False,
         name: str | None = None,
     ) -> int:
         target_name = name or self.relative.name
@@ -252,6 +279,8 @@ class SecureParent(AbstractContextManager["SecureParent"]):
                 if writable and exclusive_writes
                 else _FILE_SHARE_READ | _FILE_SHARE_WRITE
             )
+            if exclusive_readers:
+                share = 0
             handle = _windows_open_raw(
                 target_path,
                 access=access,
@@ -267,13 +296,11 @@ class SecureParent(AbstractContextManager["SecureParent"]):
                 _close_handle(handle)
                 raise
         else:
-            if writable and exclusive_writes:
+            if (writable and exclusive_writes) or exclusive_readers:
                 raise RuntimeError(
                     "Atomic append capture currently requires Windows exclusive file sharing"
                 )
-            flags = (os.O_RDWR if writable else os.O_RDONLY) | getattr(
-                os, "O_CLOEXEC", 0
-            )
+            flags = (os.O_RDWR if writable else os.O_RDONLY) | getattr(os, "O_CLOEXEC", 0)
             flags |= getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(target_name, flags, dir_fd=self._fds[-1])
         try:

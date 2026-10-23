@@ -275,7 +275,11 @@ class VaultRegistry:
                 candidate.relative_to(Path.home().resolve())
                 trusted_base = Path.home().resolve()
             except ValueError:
-                trusted_base = Path(candidate.anchor).resolve() if candidate.is_absolute() else Path.home().resolve()
+                trusted_base = (
+                    Path(candidate.anchor).resolve()
+                    if candidate.is_absolute()
+                    else Path.home().resolve()
+                )
         else:
             candidate = state_root.expanduser().resolve()
             temporary_root = Path(tempfile.gettempdir()).resolve()
@@ -294,7 +298,11 @@ class VaultRegistry:
                     candidate.relative_to(Path.home().resolve())
                     trusted_base = Path.home().resolve()
                 except ValueError:
-                    trusted_base = Path(candidate.anchor).resolve() if candidate.is_absolute() else Path.home().resolve()
+                    trusted_base = (
+                        Path(candidate.anchor).resolve()
+                        if candidate.is_absolute()
+                        else Path.home().resolve()
+                    )
         for ancestor in (candidate, *candidate.parents):
             if (ancestor / ".obsidian").is_dir():
                 raise ValueError("External state root must not be inside an Obsidian Vault")
@@ -399,8 +407,8 @@ class VaultRegistry:
             pass
         else:
             raise ValueError("Vault must not be inside the external state root")
-        if write_policy not in {"off", "append-create"}:
-            raise ValueError("write_policy must be 'off' or 'append-create'")
+        if write_policy not in {"off", "append-create", "reviewed-edit"}:
+            raise ValueError("write_policy must be 'off', 'append-create' or 'reviewed-edit'")
         if capture_mode not in {"explicit", "auto"}:
             raise ValueError("capture_mode must be 'explicit' or 'auto'")
         _ensure_directory_chain(self._trusted_state_base, self.state_root)

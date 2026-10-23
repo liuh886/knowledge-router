@@ -15,7 +15,6 @@ from typing import Any
 
 from capture_broker import (
     MutationResult,
-    commit_capture_plan,
     create_capture_plan,
 )
 from taxonomy_scanner import TaxonomyProfile, scan_taxonomy
@@ -165,9 +164,7 @@ def resolve_route(
     if matched_project:
         project_base = _existing_directory(root, profile.project_dir)
         project_dir = (
-            _existing_directory(root, f"{project_base}/{matched_project}")
-            if project_base
-            else None
+            _existing_directory(root, f"{project_base}/{matched_project}") if project_base else None
         )
         target_dir = project_dir or _capture_directory(root, profile)
         if is_progress:
@@ -201,11 +198,7 @@ def resolve_route(
         links = []
     elif matched_area:
         area_base = _existing_directory(root, profile.area_dir)
-        area_path = (
-            _existing_directory(root, f"{area_base}/{matched_area}")
-            if area_base
-            else None
-        )
+        area_path = _existing_directory(root, f"{area_base}/{matched_area}") if area_base else None
         target_dir = area_path or _capture_directory(root, profile)
         filename = f"{_slugify(text)}.md"
         relative = PurePosixPath(target_dir, filename).as_posix()
@@ -216,9 +209,9 @@ def resolve_route(
         tags = ["area", re.sub(r"^\d{3}_", "", matched_area).casefold()]
         links = [f"[[{matched_area}]]"]
     elif is_reference:
-        target_dir = _existing_directory(
-            root, profile.resource_dir
-        ) or _capture_directory(root, profile)
+        target_dir = _existing_directory(root, profile.resource_dir) or _capture_directory(
+            root, profile
+        )
         filename = f"{_slugify(text)}.md"
         relative = PurePosixPath(target_dir, filename).as_posix()
         action = "create_new"
@@ -268,7 +261,10 @@ def execute_capture(
     expected_sha256: str | None = None,
     idempotency_key: str | None = None,
 ) -> MutationResult:
-    """Compatibility helper that freezes and commits the same external plan."""
+    """Compatibility API using the same commit/index boundary as the CLI."""
+    from mutation_service import commit_and_refresh
+    from registry import VaultRegistry
+
     plan = create_capture_plan(
         vault_root,
         state_dir,
@@ -278,7 +274,12 @@ def execute_capture(
         expected_sha256=expected_sha256,
         idempotency_key=idempotency_key,
     )
-    return commit_capture_plan(vault_root, state_dir, plan)
+    registry = VaultRegistry(state_dir.expanduser().resolve().parent)
+    config = registry.resolve(state_dir.name)
+    result = commit_and_refresh(registry, config, plan)
+    if result["status"] == "applied_pending_index":
+        raise RuntimeError(f"{result['message']}: {result['index_error']}")
+    return MutationResult(**result["mutation"])
 
 
 def main() -> int:

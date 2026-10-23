@@ -22,9 +22,7 @@ def setup(tmp_path):
     root = tmp_path / "vault"
     for directory in ("Daily", "Projects", "Contacts"):
         (root / directory).mkdir(parents=True)
-        (root / directory / "source.md").write_text(
-            "# Human original\n", encoding="utf-8"
-        )
+        (root / directory / "source.md").write_text("# Human original\n", encoding="utf-8")
     registry = VaultRegistry(tmp_path / "state")
     config = registry.attach(root, name="test", write_policy="append-create")
     register_contexts(
@@ -61,9 +59,7 @@ def preview(setup, **changes):
         "idempotency_key": "test-event",
     }
     args.update(changes)
-    return preview_event(
-        registry, config, "Cobalt telescope milestone confirmed", **args
-    )
+    return preview_event(registry, config, "Cobalt telescope milestone confirmed", **args)
 
 
 def test_single_capture_shared_links_and_replay(setup):
@@ -81,9 +77,7 @@ def test_single_capture_shared_links_and_replay(setup):
     commit_event(registry, config, event["event_id"])
     assert (config.root_path / "Daily/event.md").read_bytes() == payload
     assert all(p.read_bytes() == raw for p, raw in before.items())
-    assert search_vault(
-        registry, registry.resolve(config.id), "Cobalt telescope", limit=5
-    )
+    assert search_vault(registry, registry.resolve(config.id), "Cobalt telescope", limit=5)
 
 
 def test_index_failure_is_resumable_without_double_write(setup, monkeypatch):
@@ -95,12 +89,10 @@ def test_index_failure_is_resumable_without_double_write(setup, monkeypatch):
         raise RuntimeError("simulated projection failure")
 
     monkeypatch.setattr(vault_service, "sync_vault", fail)
-    with pytest.raises(RuntimeError, match="projection failure"):
-        commit_event(registry, config, event["event_id"])
-    assert (
-        inspect_event(registry, config, event["event_id"])["status"]
-        == "applied_pending_index"
-    )
+    pending = commit_event(registry, config, event["event_id"])
+    assert pending["status"] == "applied_pending_index"
+    assert "projection failure" in pending["index_error"]
+    assert inspect_event(registry, config, event["event_id"])["status"] == "applied_pending_index"
     payload = (config.root_path / "Daily/event.md").read_bytes()
     monkeypatch.setattr(vault_service, "sync_vault", original)
     assert commit_event(registry, config, event["event_id"])["status"] == "completed"

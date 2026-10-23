@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-command, source-cited, non-destructive Obsidian Vault interface."""
+"""One-command, source-cited Vault interface with explicit mutation policies."""
 
 from __future__ import annotations
 
@@ -14,13 +14,10 @@ from pathlib import Path
 from typing import Any
 
 # Ensure package directory is on sys.path for sibling imports when loaded via console script
-_PKG_DIR = str(Path(__file__).resolve().parent)
-if _PKG_DIR not in sys.path:
-    sys.path.insert(0, _PKG_DIR)
+if str(Path(__file__).resolve().parent) not in sys.path:
+    sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-__version__ = "0.1.0"
-
-from capture_broker import commit_capture_plan, create_capture_plan, load_capture_plan
+from capture_broker import create_capture_plan, load_capture_plan
 from context_assembler import assemble_decision_context
 from context_brief import brief_context, format_context_brief
 from context_compile import (
@@ -86,15 +83,10 @@ from runtime_backup import (
 from secure_io import secure_read_bytes
 from scaffold import scaffold_symbiotic_vault
 from taxonomy_scanner import scan_taxonomy
-from triage_engine import (
-    ContactResolver,
-    append_contact_log,
-    append_inbox_stream,
-    format_triage_summary,
-    get_contact_detail,
-    get_contact_radar,
-    triage_todo_file,
-)
+from text_budget import budget_brief
+from memory_commands import add_memory_commands, run_memory_command
+from memory_service import plan_summary
+from mutation_service import commit_and_refresh
 from vault_doctor import (
     diagnose_vault,
     diagnostic_counts,
@@ -109,6 +101,9 @@ from vault_service import (
     sync_vault_with_scan,
     vault_status,
 )
+
+
+__version__ = "0.2.0"
 
 
 def _emit(value: object, *, json_output: bool, message: str | None = None) -> None:
@@ -165,9 +160,7 @@ def _record_maintenance(
         )
     if error:
         event["error"] = error
-    payload = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode(
-        "utf-8"
-    )
+    payload = (json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n").encode("utf-8")
     with registry.guard_vault_state(config) as state_guard:
         with FileLock(state / ".maintain-audit.lock", pinned_parent=state_guard):
             try:
@@ -205,14 +198,10 @@ def _maintenance_message(result: dict[str, Any] | list[dict[str, Any]]) -> str:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--state-root", type=Path, help="Override external derived-data root"
-    )
+    parser.add_argument("--state-root", type=Path, help="Override external derived-data root")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    attach = sub.add_parser(
-        "attach", help="Attach and index a Vault without changing it"
-    )
+    attach = sub.add_parser("attach", help="Attach and index a Vault without changing it")
     attach.add_argument("path", type=Path)
     attach.add_argument(
         "--projects-root",
@@ -221,11 +210,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     attach.add_argument("--name")
     attach.add_argument(
-        "--write-policy", choices=("off", "append-create"), default="off"
+        "--write-policy", choices=("off", "append-create", "reviewed-edit"), default="off"
     )
-    attach.add_argument(
-        "--capture-mode", choices=("explicit", "auto"), default="explicit"
-    )
+    attach.add_argument("--capture-mode", choices=("explicit", "auto"), default="explicit")
     attach.add_argument("--json", action="store_true")
 
     scaffold = sub.add_parser(
@@ -239,9 +226,9 @@ def _parser() -> argparse.ArgumentParser:
     )
     scaffold.add_argument(
         "--write-policy",
-        choices=("off", "append-create"),
-        default="append-create",
-        help="Default write policy upon attachment (default: append-create)",
+        choices=("off", "append-create", "reviewed-edit"),
+        default="off",
+        help="Write policy after initialization (default: off)",
     )
     scaffold.add_argument("--json", action="store_true")
 
@@ -253,15 +240,11 @@ def _parser() -> argparse.ArgumentParser:
     status.add_argument("--audit", action="store_true")
     status.add_argument("--json", action="store_true")
 
-    sync = sub.add_parser(
-        "sync", help="Build and atomically activate a fresh external index"
-    )
+    sync = sub.add_parser("sync", help="Build and atomically activate a fresh external index")
     sync.add_argument("--vault")
     sync.add_argument("--json", action="store_true")
 
-    search = sub.add_parser(
-        "search", help="Search with path, lines, checksum, and staleness"
-    )
+    search = sub.add_parser("search", help="Search with path, lines, checksum, and staleness")
     search.add_argument("query")
     search.add_argument("--vault")
     search.add_argument("--all", action="store_true")
@@ -292,11 +275,14 @@ def _parser() -> argparse.ArgumentParser:
     brief = sub.add_parser("brief", help="Build a bounded source-cited reference brief")
     brief.add_argument("topic")
     brief.add_argument("--vault")
-    brief.add_argument(
-        "--projects", action="store_true", help="Include repository documentation"
-    )
+    brief.add_argument("--projects", action="store_true", help="Include repository documentation")
     brief.add_argument("--project", help="Limit repository evidence to one project id")
     brief.add_argument("--json", action="store_true")
+    brief.add_argument(
+        "--budget-tokens",
+        type=int,
+        help="Budget the complete output using a disclosed token estimate",
+    )
 
     projects = sub.add_parser(
         "projects", help="Attach, sync, and inspect a read-only Git project catalog"
@@ -311,14 +297,10 @@ def _parser() -> argparse.ArgumentParser:
     projects_sync = project_sub.add_parser("sync", help="Refresh the project catalog")
     projects_sync.add_argument("--vault")
     projects_sync.add_argument("--json", action="store_true")
-    projects_status = project_sub.add_parser(
-        "status", help="Show project catalog status"
-    )
+    projects_status = project_sub.add_parser("status", help="Show project catalog status")
     projects_status.add_argument("--vault")
     projects_status.add_argument("--json", action="store_true")
-    projects_list = project_sub.add_parser(
-        "list", help="List cataloged Git repositories"
-    )
+    projects_list = project_sub.add_parser("list", help="List cataloged Git repositories")
     projects_list.add_argument("--vault")
     projects_list.add_argument("--json", action="store_true")
 
@@ -350,9 +332,7 @@ def _parser() -> argparse.ArgumentParser:
     context_brief.add_argument("selector")
     context_brief.add_argument("--query", default="")
     context_brief.add_argument("--limit", type=int, default=8)
-    context_brief.add_argument(
-        "--project", help="Explicit project id; requires --query"
-    )
+    context_brief.add_argument("--project", help="Explicit project id; requires --query")
     context_brief.add_argument("--vault")
     context_brief.add_argument("--json", action="store_true")
     tick = context_sub.add_parser(
@@ -362,9 +342,7 @@ def _parser() -> argparse.ArgumentParser:
     tick.add_argument("--limit", type=int, default=20)
     tick.add_argument("--max-contexts", type=int, default=100)
     tick.add_argument("--json", action="store_true")
-    due = context_sub.add_parser(
-        "due", help="Read per-Context maintenance review queue"
-    )
+    due = context_sub.add_parser("due", help="Read per-Context maintenance review queue")
     due.add_argument("--vault")
     due.add_argument("--limit", type=int, default=20)
     due.add_argument("--json", action="store_true")
@@ -493,9 +471,7 @@ def _parser() -> argparse.ArgumentParser:
     history.add_argument("--vault")
     history.add_argument("--limit", type=int, default=20)
     history.add_argument("--json", action="store_true")
-    event_capture = context_sub.add_parser(
-        "capture", help="Freeze one event and its Context links"
-    )
+    event_capture = context_sub.add_parser("capture", help="Freeze one event and its Context links")
     event_capture.add_argument("text")
     event_capture.add_argument("--target", required=True)
     event_capture.add_argument("--primary-context", required=True)
@@ -508,17 +484,11 @@ def _parser() -> argparse.ArgumentParser:
     event_capture.add_argument("--followup-id")
     event_capture.add_argument("--followup-title")
     event_capture.add_argument("--due-at")
-    event_capture.add_argument(
-        "--timezone", help="IANA timezone for relative or local due times"
-    )
-    event_capture.add_argument(
-        "--followup-status", choices=("open", "done", "cancelled")
-    )
+    event_capture.add_argument("--timezone", help="IANA timezone for relative or local due times")
+    event_capture.add_argument("--followup-status", choices=("open", "done", "cancelled"))
     event_capture.add_argument("--vault")
     event_capture.add_argument("--json", action="store_true")
-    followups = context_sub.add_parser(
-        "followups", help="List source-backed follow-ups"
-    )
+    followups = context_sub.add_parser("followups", help="List source-backed follow-ups")
     followups.add_argument("context_id")
     followups.add_argument("--due-only", action="store_true")
     followups.add_argument("--limit", type=int, default=20)
@@ -561,15 +531,11 @@ def _parser() -> argparse.ArgumentParser:
     doctor = sub.add_parser("doctor", help="Read-only broken-link and orphan report")
     doctor.add_argument("--vault")
     doctor.add_argument("--include-daily-orphans", action="store_true")
-    doctor.add_argument(
-        "--details", action="store_true", help="Return every issue occurrence"
-    )
+    doctor.add_argument("--details", action="store_true", help="Return every issue occurrence")
     doctor.add_argument("--detail-limit", type=int, default=10)
     doctor.add_argument("--json", action="store_true")
 
-    maintain = sub.add_parser(
-        "maintain", help="Refresh index then run read-only diagnostics"
-    )
+    maintain = sub.add_parser("maintain", help="Refresh index then run read-only diagnostics")
     maintain.add_argument("--vault")
     maintain.add_argument("--all", action="store_true")
     maintain.add_argument("--no-sync", action="store_true")
@@ -611,79 +577,14 @@ def _parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--label")
     checkpoint.add_argument("--json", action="store_true")
 
-    triage = sub.add_parser(
-        "triage", help="Triage inbox notes (entity linking, multi-dimensional tagging)"
-    )
-    triage_sub = triage.add_subparsers(dest="triage_command", required=True)
-    triage_todo = triage_sub.add_parser("todo", help="Triage inbox todo items")
-    triage_todo.add_argument("--vault")
-    triage_todo.add_argument(
-        "--year", type=int, help="Target year for todo file (defaults to current year)"
-    )
-    triage_todo.add_argument(
-        "--commit",
-        action="store_true",
-        help="Commit modifications safely to disk (defaults to dry-run preview)",
-    )
-    triage_todo.add_argument("--json", action="store_true")
-
-    contact = sub.add_parser(
-        "contact", help="Manage and append interaction logs to contact notes"
-    )
-    contact_sub = contact.add_subparsers(dest="contact_command", required=True)
-    contact_append = contact_sub.add_parser(
-        "append", help="Append interaction log to a contact note in 305_Contact/"
-    )
-    contact_append.add_argument(
-        "target", help="Name, alias, or substring of the contact"
-    )
-    contact_append.add_argument("text", help="Interaction log text to append")
-    contact_append.add_argument("--vault")
-    contact_append.add_argument("--json", action="store_true")
-
-    contact_search = contact_sub.add_parser(
-        "search", help="Search contact by name or alias"
-    )
-    contact_search.add_argument("query", help="Contact name or alias query")
-    contact_search.add_argument("--vault")
-    contact_search.add_argument("--json", action="store_true")
-
-    contact_radar = contact_sub.add_parser(
-        "radar", help="View global contact radar and follow-up status"
-    )
-    contact_radar.add_argument("--vault")
-    contact_radar.add_argument("--year", type=int, help="Target year")
-    contact_radar.add_argument("--json", action="store_true")
-
-    contact_show = contact_sub.add_parser(
-        "show", help="View detailed contact card, open tasks, and associated projects"
-    )
-    contact_show.add_argument("query", help="Contact name or alias query")
-    contact_show.add_argument("--vault")
-    contact_show.add_argument("--year", type=int, help="Target year")
-    contact_show.add_argument("--json", action="store_true")
-
-    inbox = sub.add_parser(
-        "inbox", help="Capture stream notes into 000_Inbox/<type>.<year>.md"
-    )
-    inbox_sub = inbox.add_subparsers(dest="inbox_command", required=True)
-    inbox_append = inbox_sub.add_parser(
-        "append", help="Append capture entry to 000_Inbox/<type>.<year>.md"
-    )
-    inbox_append.add_argument(
-        "type", choices=("todo", "memo", "idea"), help="Type of capture"
-    )
-    inbox_append.add_argument("text", help="Content to record")
-    inbox_append.add_argument("--vault")
-    inbox_append.add_argument("--year", type=int, help="Target year")
-    inbox_append.add_argument("--json", action="store_true")
+    add_memory_commands(sub)
     return parser
 
 
 def main() -> int:
     args = _parser().parse_args()
-    registry = VaultRegistry(args.state_root)
     try:
+        registry = VaultRegistry(args.state_root)
         if args.command == "scaffold":
             res = scaffold_symbiotic_vault(
                 args.path,
@@ -737,9 +638,7 @@ def main() -> int:
             return 0
 
         if args.command == "checkpoint":
-            result = create_source_checkpoint(
-                args.source_root, args.backup_root, label=args.label
-            )
+            result = create_source_checkpoint(args.source_root, args.backup_root, label=args.label)
             _emit(
                 result,
                 json_output=args.json,
@@ -761,161 +660,14 @@ def main() -> int:
         if args.command in {"search", "maintain"} and args.all:
             configs = registry.list()
             if not configs:
-                raise KeyError(
-                    "No Vault is attached. Run `knowledge_router.py attach <path>`."
-                )
+                raise KeyError("No Vault is attached. Run `knowledge_router.py attach <path>`.")
             config = configs[0]
         else:
             config = registry.resolve(getattr(args, "vault", None))
-        if args.command == "triage":
-            if args.triage_command == "todo":
-                lock_path = registry.vault_state_dir(config) / "locks" / "triage.lock"
-                report = triage_todo_file(
-                    config.root_path,
-                    vault_name=config.name,
-                    year=args.year,
-                    commit=args.commit,
-                    lock_path=lock_path,
-                )
-                _emit(
-                    report.to_dict(),
-                    json_output=args.json,
-                    message=format_triage_summary(report),
-                )
-                return 0
-        if args.command == "contact":
-            lock_path = registry.vault_state_dir(config) / "locks" / "contact.lock"
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-            if args.contact_command == "append":
-                res = append_contact_log(
-                    config.root_path,
-                    args.target,
-                    args.text,
-                    vault_name=config.name,
-                    lock_path=lock_path,
-                )
-                _emit(res, json_output=args.json, message=res.get("message"))
-                return 0 if res["status"] == "success" else 1
-            if args.contact_command == "search":
-                resolver = ContactResolver(config.root_path)
-                entity, candidates = resolver.match_contact(args.query)
-                if entity:
-                    res = {
-                        "status": "found",
-                        "canonical": entity.canonical,
-                        "relative_path": entity.relative_path,
-                        "chinese_name": entity.chinese_name,
-                        "english_name": entity.english_name,
-                        "aliases": entity.aliases,
-                    }
-                    _emit(
-                        res,
-                        json_output=args.json,
-                        message=f"👤 找到联系人: [[{entity.canonical}]] ({entity.relative_path})\n别名: {', '.join(entity.aliases) if entity.aliases else '无'}",
-                    )
-                    return 0
-                if candidates:
-                    res = {
-                        "status": "ambiguous",
-                        "query": args.query,
-                        "candidates": candidates,
-                    }
-                    _emit(
-                        res,
-                        json_output=args.json,
-                        message=f"❓ 找到多个候选联系人: {', '.join(candidates)}，请指定更精确的名称",
-                    )
-                    return 1
-                res = {"status": "not_found", "query": args.query}
-                _emit(
-                    res,
-                    json_output=args.json,
-                    message=f"未在 305_Contact/ 中找到匹配联系人: '{args.query}'",
-                )
-                return 1
-            if args.contact_command == "radar":
-                radar = get_contact_radar(config.root_path, year=args.year)
-                lines = [
-                    f"🌐 人脉协同雷达 (共 {radar['total_contacts']} 位联系人，{radar['total_pending_tasks']} 项待办推进中)",
-                    "-" * 65,
-                ]
-                for c in radar["contacts"]:
-                    if c["pending_tasks_count"] > 0 or c["tier"] == "🟢 活跃交流":
-                        tasks_str = (
-                            f"【{c['pending_tasks_count']} 项待办】"
-                            if c["pending_tasks_count"] > 0
-                            else ""
-                        )
-                        comp_str = f"({c['company']})" if c["company"] else ""
-                        lines.append(
-                            f"{c['tier']} | [[{c['canonical']}]] {comp_str} {tasks_str} 最近: {c['last_contact_date']}"
-                        )
-                lines.append("-" * 65)
-                lines.append(
-                    f"📊 状态分布: {', '.join(f'{k}: {v}' for k, v in radar['tier_summary'].items())}"
-                )
-                _emit(radar, json_output=args.json, message="\n".join(lines))
-                return 0
-
-            if args.contact_command == "show":
-                detail = get_contact_detail(config.root_path, args.query, year=args.year)
-                if detail["status"] == "not_found":
-                    candidates = detail.get("candidates", [])
-                    if candidates:
-                        msg = f"❓ 找到多个候选联系人: {', '.join(candidates)}，请指定更精确的名称"
-                    else:
-                        msg = f"未在 305_Contact/ 中找到匹配联系人: '{args.query}'"
-                    _emit(detail, json_output=args.json, message=msg)
-                    return 1
-
-                lines = [
-                    f"👤 联系人画像: [[{detail['canonical']}]]",
-                    f"📁 笔记路径: {detail['relative_path']}",
-                ]
-                if detail["aliases"]:
-                    lines.append(f"🏷️ 别名: {', '.join(detail['aliases'])}")
-                if detail["info"].get("company"):
-                    lines.append(f"🏢 单位/机构: {detail['info']['company']}")
-                if detail["associated_projects"]:
-                    lines.append(f"📂 关联项目: {', '.join(detail['associated_projects'])}")
-
-                lines.append("-" * 50)
-                lines.append(f"📌 当前待办 ({len(detail['pending_tasks'])} 项):")
-                if detail["pending_tasks"]:
-                    for t in detail["pending_tasks"]:
-                        lines.append(f"  {t}")
-                else:
-                    lines.append("  (暂无未完成待办)")
-
-                lines.append("-" * 50)
-                lines.append(f"🪵 最近交互纪要 ({len(detail['recent_logs'])} 条):")
-                if detail["recent_logs"]:
-                    for log in detail["recent_logs"]:
-                        lines.append(f"  {log}")
-                else:
-                    lines.append("  (暂无记录)")
-
-                _emit(detail, json_output=args.json, message="\n".join(lines))
-                return 0
-
-        if args.command == "inbox":
-            if args.inbox_command == "append":
-                lock_path = registry.vault_state_dir(config) / "locks" / "inbox.lock"
-                lock_path.parent.mkdir(parents=True, exist_ok=True)
-                res = append_inbox_stream(
-                    config.root_path,
-                    args.type,
-                    args.text,
-                    vault_name=config.name,
-                    year=args.year,
-                    lock_path=lock_path,
-                )
-                _emit(res, json_output=args.json, message=res.get("message"))
-                return 0
+        if args.command in {"triage", "contact", "inbox"}:
+            return run_memory_command(args, registry, config, _emit)
         if args.command == "backup":
-            result = create_runtime_backup(
-                registry, config, args.backup_root, label=args.label
-            )
+            result = create_runtime_backup(registry, config, args.backup_root, label=args.label)
             _emit(
                 result,
                 json_output=args.json,
@@ -962,9 +714,7 @@ def main() -> int:
             configs = registry.list() if args.all else [config]
             results: list[dict[str, Any]] = []
             for item in configs:
-                results.extend(
-                    search_vault(registry, item, args.query, limit=args.limit)
-                )
+                results.extend(search_vault(registry, item, args.query, limit=args.limit))
             if args.projects:
                 evidence_groups: list[list[EvidenceRecord]] = [
                     [EvidenceRecord.from_vault_hit(item) for item in results]
@@ -989,15 +739,12 @@ def main() -> int:
                     )
                 merged = merge_evidence(evidence_groups, limit=args.limit)
                 canonical = [
-                    item.to_dict(compatibility=item.source_type == "vault")
-                    for item in merged
+                    item.to_dict(compatibility=item.source_type == "vault") for item in merged
                 ]
                 if args.json:
                     _emit(canonical, json_output=True)
                 elif not canonical:
-                    print(
-                        "No sufficiently relevant Vault or repository evidence found."
-                    )
+                    print("No sufficiently relevant Vault or repository evidence found.")
                 else:
                     for item in canonical:
                         stale = " STALE" if item["stale"] else ""
@@ -1084,9 +831,7 @@ def main() -> int:
                     if not args.content_file:
                         raise ValueError("--save requires --content-file")
                     path = args.content_file.expanduser().absolute()
-                    content = secure_read_bytes(path.parent, path.name).decode(
-                        "utf-8-sig"
-                    )
+                    content = secure_read_bytes(path.parent, path.name).decode("utf-8-sig")
                     written = write_compiled_card(
                         registry,
                         config,
@@ -1117,9 +862,7 @@ def main() -> int:
                     if not args.content_file:
                         raise ValueError("--stage requires --content-file")
                     path = args.content_file.expanduser().absolute()
-                    content = secure_read_bytes(path.parent, path.name).decode(
-                        "utf-8-sig"
-                    )
+                    content = secure_read_bytes(path.parent, path.name).decode("utf-8-sig")
                     staged = stage_compiled_card(
                         registry,
                         config,
@@ -1173,9 +916,7 @@ def main() -> int:
                     if not args.target_path:
                         raise ValueError("--create requires --target-path")
                     content = (
-                        args.content_file.read_text(encoding="utf-8")
-                        if args.content_file
-                        else None
+                        args.content_file.read_text(encoding="utf-8") if args.content_file else None
                     )
                     staged = stage_missing_note(
                         registry,
@@ -1218,9 +959,7 @@ def main() -> int:
                     "scope": report.scope,
                     **summary,
                     "scan_incomplete": scan_incomplete,
-                    "items": [
-                        item.to_dict() for item in report.items[: args.limit]
-                    ],
+                    "items": [item.to_dict() for item in report.items[: args.limit]],
                     "items_truncated": len(report.items) > args.limit,
                     "writes_performed": 0,
                     "vault_writes": 0,
@@ -1273,9 +1012,9 @@ def main() -> int:
             elif args.context_command == "page":
                 if args.page_command == "publish":
                     draft_path = args.content_file.expanduser().absolute()
-                    draft = secure_read_bytes(
-                        draft_path.parent, draft_path.name
-                    ).decode("utf-8-sig")
+                    draft = secure_read_bytes(draft_path.parent, draft_path.name).decode(
+                        "utf-8-sig"
+                    )
                     published = publish_page(
                         registry,
                         config,
@@ -1316,8 +1055,7 @@ def main() -> int:
                         {"page_count": len(rows), "pages": rows},
                         json_output=args.json,
                         message="\n".join(
-                            f"{row['page_id']} v{row['version']} stale={row['stale']} "
-                            f"{row['path']}"
+                            f"{row['page_id']} v{row['version']} stale={row['stale']} {row['path']}"
                             for row in rows
                         )
                         or "尚未发布任何知识页。",
@@ -1338,9 +1076,7 @@ def main() -> int:
                 )
                 return 0
             elif args.context_command == "state":
-                result = project_state(
-                    registry, config, args.context_id, limit=args.limit
-                )
+                result = project_state(registry, config, args.context_id, limit=args.limit)
             elif args.context_command == "brief":
                 result = brief_context(
                     registry,
@@ -1350,40 +1086,23 @@ def main() -> int:
                     limit=args.limit,
                     project_id=args.project,
                 )
-                _emit(
-                    result, json_output=args.json, message=format_context_brief(result)
-                )
+                _emit(result, json_output=args.json, message=format_context_brief(result))
                 return 0
             elif args.context_command == "history":
-                result = context_history(
-                    registry, config, args.context_id, limit=args.limit
-                )
+                result = context_history(registry, config, args.context_id, limit=args.limit)
             elif args.context_command == "capture":
                 change = None
                 due_resolution = None
                 if args.timezone and not args.due_at:
                     raise ValueError("--timezone requires --due-at")
-                if (
-                    args.followup_id
-                    or args.followup_title
-                    or args.due_at
-                    or args.followup_status
-                ):
+                if args.followup_id or args.followup_title or args.due_at or args.followup_status:
                     if args.state_field or args.state_value:
-                        raise ValueError(
-                            "Use follow-up fields or generic state fields, not both"
-                        )
-                    if (
-                        not args.followup_id
-                        or not args.followup_title
-                        or not args.due_at
-                    ):
+                        raise ValueError("Use follow-up fields or generic state fields, not both")
+                    if not args.followup_id or not args.followup_title or not args.due_at:
                         raise ValueError(
                             "Follow-up requires --followup-id, --followup-title and --due-at"
                         )
-                    due_resolution = resolve_due_time(
-                        args.due_at, timezone=args.timezone
-                    )
+                    due_resolution = resolve_due_time(args.due_at, timezone=args.timezone)
                     change = followup_change(
                         args.state_context or args.primary_context,
                         followup_id=args.followup_id,
@@ -1392,16 +1111,9 @@ def main() -> int:
                         status=args.followup_status or "open",
                         replaces=args.replaces,
                     )
-                elif (
-                    args.state_field
-                    or args.state_value
-                    or args.state_context
-                    or args.replaces
-                ):
+                elif args.state_field or args.state_value or args.state_context or args.replaces:
                     if not args.state_field or not args.state_value:
-                        raise ValueError(
-                            "State capture requires --state-field and --state-value"
-                        )
+                        raise ValueError("State capture requires --state-field and --state-value")
                     change = {
                         "context_id": args.state_context or args.primary_context,
                         "field": args.state_field,
@@ -1451,6 +1163,8 @@ def main() -> int:
                     limit=args.limit,
                 )
             _emit(result, json_output=args.json)
+            if result.get("status") == "applied_pending_index":
+                return 2
         elif args.command == "route":
             route = resolve_route(
                 args.text, scan_taxonomy(config.root_path), vault_root=config.root_path
@@ -1483,18 +1197,14 @@ def main() -> int:
                     idempotency_key=args.idempotency_key,
                 )
                 route_data = route.to_dict()
-            plan_summary = {
-                key: value
-                for key, value in plan.to_dict().items()
-                if key != "payload_base64"
-            }
+            summary = plan_summary(plan)
             if not args.commit:
                 _emit(
                     {
                         "status": "preview",
                         "write_policy": config.write_policy,
                         "route": route_data,
-                        "plan": plan_summary,
+                        "plan": summary,
                     },
                     json_output=args.json,
                     message=(
@@ -1504,18 +1214,14 @@ def main() -> int:
                     ),
                 )
             else:
-                mutation = commit_capture_plan(config.root_path, state_dir, plan)
-                sync_result = sync_vault(registry, config)
-                result = {
-                    "plan": plan_summary,
-                    "mutation": mutation.to_dict(),
-                    "sync": sync_result,
-                }
+                result = {"plan": summary, **commit_and_refresh(registry, config, plan)}
                 _emit(
                     result,
                     json_output=args.json,
-                    message=f"Committed {mutation.action}: {mutation.relative_path}",
+                    message=result.get("message", f"Committed {plan.action}: {plan.relative_path}"),
                 )
+                if result["status"] == "applied_pending_index":
+                    return 2
         elif args.command == "brief":
             if args.project and not args.projects:
                 raise ValueError("--project requires --projects")
@@ -1538,6 +1244,8 @@ def main() -> int:
                 generation=config.index_generation,
                 repository_evidence=repository_evidence,
             )
+            if args.budget_tokens is not None:
+                result = budget_brief(result, args.budget_tokens)
             _emit(result, json_output=args.json, message=result["markdown"])
         elif args.command == "projects":
             if args.project_command == "attach":
@@ -1572,12 +1280,8 @@ def main() -> int:
             doctor_report = diagnose_vault(config.root_path, source_scan=source_scan)
             signals = vault_quality_signals(config.id, doctor_report, source_scan)
             if config.project_catalog and not args.vault_only:
-                signals.extend(
-                    project_quality_signals(list_catalog_projects(registry, config))
-                )
-            result = quality_report(
-                signals, detail_limit=args.detail_limit, details=args.details
-            )
+                signals.extend(project_quality_signals(list_catalog_projects(registry, config)))
+            result = quality_report(signals, detail_limit=args.detail_limit, details=args.details)
             version = load_context_version(registry, config)
             result["context_queue"] = context_quality_queue(
                 version["definitions"]["contexts"] if version else [],
@@ -1620,9 +1324,7 @@ def main() -> int:
                 if args.tick_max_contexts < 1 or args.tick_max_contexts > 1000:
                     raise ValueError("--tick-max-contexts must be between 1 and 1000")
                 configs = (
-                    sorted(registry.list(), key=lambda item: item.id)
-                    if args.all
-                    else [config]
+                    sorted(registry.list(), key=lambda item: item.id) if args.all else [config]
                 )
                 cycle_run = uuid.uuid4().hex
                 cycles: list[dict[str, Any]] = []
@@ -1643,11 +1345,7 @@ def main() -> int:
                 result = cycles if args.all else cycles[0]
                 _emit(result, json_output=args.json)
                 return 2 if incomplete_or_failed else 0
-            configs = (
-                sorted(registry.list(), key=lambda item: item.id)
-                if args.all
-                else [config]
-            )
+            configs = sorted(registry.list(), key=lambda item: item.id) if args.all else [config]
             maintained: list[dict[str, Any]] = []
             failures = False
             run_id = uuid.uuid4().hex
@@ -1660,9 +1358,7 @@ def main() -> int:
                         source_scan = scan_notes(item.root_path)
                     else:
                         sync_result, source_scan = sync_vault_with_scan(registry, item)
-                    full_doctor_result = diagnose_vault(
-                        item.root_path, source_scan=source_scan
-                    )
+                    full_doctor_result = diagnose_vault(item.root_path, source_scan=source_scan)
                     doctor_result = (
                         full_doctor_result
                         if args.details
@@ -1727,9 +1423,8 @@ def main() -> int:
                 return 2
         return 0
     except (
-        FileNotFoundError,
+        OSError,
         KeyError,
-        PermissionError,
         RuntimeError,
         ValueError,
     ) as exc:

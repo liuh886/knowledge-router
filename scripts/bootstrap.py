@@ -22,9 +22,7 @@ def bootstrap_vault(
     write_policy: str = "off",
 ) -> dict[str, Any]:
     """Attach and index while preserving every byte and path inside the Vault."""
-    del (
-        force
-    )  # Historical flag retained so callers do not break; rules are never overwritten.
+    del force  # Historical flag retained so callers do not break; rules are never overwritten.
     registry = VaultRegistry(state_root)
     config = registry.attach(vault_root, name=name, write_policy=write_policy)
     state_dir = registry.vault_state_dir(config)
@@ -48,13 +46,11 @@ def bootstrap_vault(
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("vault", type=Path, nargs="?")
-    parser.add_argument(
-        "--vault", dest="vault_option", type=Path, help=argparse.SUPPRESS
-    )
+    parser.add_argument("--vault", dest="vault_option", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--state-root", type=Path)
     parser.add_argument("--name")
     parser.add_argument(
-        "--write-policy", choices=("off", "append-create"), default="off"
+        "--write-policy", choices=("off", "append-create", "reviewed-edit"), default="off"
     )
     parser.add_argument("--force-rules", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--json", action="store_true")

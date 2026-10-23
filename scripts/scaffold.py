@@ -14,20 +14,39 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from bootstrap import bootstrap_vault
+from secure_io import SecureParent, ensure_directory_tree
 
 
-def _ensure_file(path: Path, content: str, created_files: list[str], skipped_files: list[str]) -> None:
-    if path.exists():
-        skipped_files.append(str(path))
-    else:
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content, encoding="utf-8", newline="\n")
+def _ensure_file(
+    path: Path,
+    content: str,
+    created_files: list[str],
+    skipped_files: list[str],
+    *,
+    vault_root: Path,
+) -> None:
+    with SecureParent(vault_root, path.relative_to(vault_root).as_posix()) as parent:
+        try:
+            descriptor = parent.create_new()
+        except FileExistsError:
+            descriptor = parent.open_existing(writable=False)
+            os.close(descriptor)
+            skipped_files.append(str(path))
+            return
+        try:
+            payload = content.encode("utf-8")
+            if os.write(descriptor, payload) != len(payload):
+                raise OSError(f"Short scaffold write: {path}")
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
         created_files.append(str(path))
 
 
@@ -36,13 +55,23 @@ def scaffold_symbiotic_vault(
     *,
     name: str | None = None,
     attach: bool = True,
-    write_policy: str = "append-create",
+    write_policy: str = "off",
     state_root: Path | None = None,
 ) -> dict[str, Any]:
     """Scaffold the 6 symbiotic memory slices non-destructively."""
-    vault = Path(vault_root).expanduser().resolve()
-    vault.mkdir(parents=True, exist_ok=True)
+    requested = Path(vault_root).expanduser().absolute()
+    vault = ensure_directory_tree(Path(requested.anchor), requested)
 
+    root_anchor = (vault.relative_to(Path(vault.anchor)) / ".scaffold-anchor").as_posix()
+    with SecureParent(Path(vault.anchor), root_anchor, allow_hidden=True):
+        return _populate_symbiotic_vault(
+            vault, name=name, attach=attach, write_policy=write_policy, state_root=state_root
+        )
+
+
+def _populate_symbiotic_vault(
+    vault: Path, *, name: str | None, attach: bool, write_policy: str, state_root: Path | None
+) -> dict[str, Any]:
     now = datetime.now()
     year = now.strftime("%Y")
     month = now.strftime("%Y-%m")
@@ -71,8 +100,9 @@ def scaffold_symbiotic_vault(
     ]
 
     for d in directories:
-        if not d.exists():
-            d.mkdir(parents=True, exist_ok=True)
+        existed = d.exists()
+        ensure_directory_tree(vault, d)
+        if not existed:
             created_dirs.append(str(d))
 
     # 2. Slice 1: Focus (Single Active Dynamic Anchor)
@@ -88,7 +118,13 @@ def scaffold_symbiotic_vault(
 ## 🚫 Not-To-Do List (边界与反向清单)
 - 坚决不做的事 / 保护注意力与认知主权的防线
 """
-    _ensure_file(vault / "000_Inbox" / "FOCUS.md", focus_content, created_files, skipped_files)
+    _ensure_file(
+        vault / "000_Inbox" / "FOCUS.md",
+        focus_content,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     # 3. Slice 2: Idea Stream (idea.YYYY.md)
     idea_content = f"""---
@@ -105,7 +141,13 @@ year: {year}
 ## {month}
 
 """
-    _ensure_file(vault / "000_Inbox" / f"idea.{year}.md", idea_content, created_files, skipped_files)
+    _ensure_file(
+        vault / "000_Inbox" / f"idea.{year}.md",
+        idea_content,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     # 4. Slice 3: Memo Stream (memo.YYYY.md)
     memo_content = f"""---
@@ -122,7 +164,13 @@ year: {year}
 ## {month}
 
 """
-    _ensure_file(vault / "000_Inbox" / f"memo.{year}.md", memo_content, created_files, skipped_files)
+    _ensure_file(
+        vault / "000_Inbox" / f"memo.{year}.md",
+        memo_content,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     # 5. Slice 4: Todo Stream (todo.YYYY.md)
     todo_content = f"""---
@@ -139,7 +187,13 @@ year: {year}
 ## {month}
 
 """
-    _ensure_file(vault / "000_Inbox" / f"todo.{year}.md", todo_content, created_files, skipped_files)
+    _ensure_file(
+        vault / "000_Inbox" / f"todo.{year}.md",
+        todo_content,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     # 6. Slice 5: Contact Template & Readme
     contact_tpl = """---
@@ -162,7 +216,13 @@ WHERE !completed AND contains(text, this.file.name)
 ## 🪵 交互流 (Interaction Timeline)
 - [YYYY-MM-DD HH:mm]: 初次沟通与记录
 """
-    _ensure_file(vault / "300_Resources" / "305_Contact" / "_Template.md", contact_tpl, created_files, skipped_files)
+    _ensure_file(
+        vault / "300_Resources" / "305_Contact" / "_Template.md",
+        contact_tpl,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     # 7. Inbox Assistant Handbook
     inbox_readme = """# 000_Inbox 助理与共生记忆操作手册
@@ -174,7 +234,13 @@ WHERE !completed AND contains(text, this.file.name)
 - `300_Resources/305_Contact/`: 实体人脉卡片
 - `WYQD/` (Ownly): 个人所有权、物品装备与旅行足迹数据库
 """
-    _ensure_file(vault / "000_Inbox" / "README.md", inbox_readme, created_files, skipped_files)
+    _ensure_file(
+        vault / "000_Inbox" / "README.md",
+        inbox_readme,
+        created_files,
+        skipped_files,
+        vault_root=vault,
+    )
 
     report: dict[str, Any] = {
         "status": "scaffolded",
@@ -204,10 +270,18 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("vault", type=Path, help="Target Vault directory path")
     parser.add_argument("--name", help="Custom name for the vault in registry")
-    parser.add_argument("--no-attach", action="store_true", help="Only scaffold folders and files without attaching")
-    parser.add_argument("--write-policy", choices=("off", "append-create"), default="append-create",
-                        help="Default write policy upon attachment (default: append-create)")
-    parser.add_argument("--state-root", type=Path, help="Custom state root directory (isolated testing)")
+    parser.add_argument(
+        "--no-attach", action="store_true", help="Only scaffold folders and files without attaching"
+    )
+    parser.add_argument(
+        "--write-policy",
+        choices=("off", "append-create", "reviewed-edit"),
+        default="off",
+        help="Write policy upon attachment (default: off)",
+    )
+    parser.add_argument(
+        "--state-root", type=Path, help="Custom state root directory (isolated testing)"
+    )
     parser.add_argument("--json", action="store_true", help="Output machine-readable JSON")
 
     args = parser.parse_args(argv)
@@ -227,9 +301,13 @@ def main(argv: list[str] | None = None) -> int:
         print(json.dumps(res, ensure_ascii=False, indent=2))
     else:
         print(f"✓ 成功生产共生记忆架构于: {res['vault_root']}")
-        print(f"  新建目录数: {res['created_directories_count']}, 新建模板文件: {res['created_files_count']}")
+        print(
+            f"  新建目录数: {res['created_directories_count']}, 新建模板文件: {res['created_files_count']}"
+        )
         if res.get("attach"):
-            print(f"  已自动挂载至注册表: [{res['attach']['vault_name']}] (ID: {res['attach']['vault_id']})")
+            print(
+                f"  已自动挂载至注册表: [{res['attach']['vault_name']}] (ID: {res['attach']['vault_id']})"
+            )
             print(f"  已建立只读检索索引: {res['attach']['indexed_notes']} 篇笔记")
     return 0
 

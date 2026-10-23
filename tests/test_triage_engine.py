@@ -8,6 +8,8 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
 from triage_engine import ContactResolver, TagClassifier, triage_todo_file
+from memory_service import triage_todos
+from registry import VaultRegistry
 
 
 @pytest.fixture
@@ -36,11 +38,7 @@ def mock_vault(tmp_path: Path) -> Path:
     sub_bgp = contact_dir / "BGP"
     sub_bgp.mkdir()
     (sub_bgp / "Du Haitao 杜海涛.md").write_text(
-        "---\n"
-        "Company: BGP\n"
-        "tags: [Contact/Management]\n"
-        "---\n"
-        "# Du Haitao 杜海涛\n",
+        "---\nCompany: BGP\ntags: [Contact/Management]\n---\n# Du Haitao 杜海涛\n",
         encoding="utf-8",
     )
 
@@ -105,7 +103,7 @@ def test_tag_classifier():
 
 def test_triage_dry_run_and_commit(mock_vault: Path):
     # Dry run
-    report_dry = triage_todo_file(mock_vault, year=2026, commit=False)
+    report_dry = triage_todo_file(mock_vault, year=2026)
     assert not report_dry.committed
     assert report_dry.triaged_count == 4
     assert len(report_dry.diffs) == 4
@@ -117,10 +115,12 @@ def test_triage_dry_run_and_commit(mock_vault: Path):
     raw_before = (mock_vault / "000_Inbox" / "todo.2026.md").read_text(encoding="utf-8")
     assert "约许老师商量降水模型" in raw_before
 
-    # Commit run
-    report_commit = triage_todo_file(mock_vault, year=2026, commit=True)
-    assert report_commit.committed
-    assert report_commit.triaged_count == 4
+    # Full edits require the explicit reviewed-edit policy.
+    registry = VaultRegistry(mock_vault.parent / "State")
+    config = registry.attach(mock_vault, write_policy="reviewed-edit")
+    report_commit = triage_todos(registry, config, year=2026, commit=True)
+    assert report_commit["committed"]
+    assert report_commit["triaged_count"] == 4
 
     # Verify disk was updated
     raw_after = (mock_vault / "000_Inbox" / "todo.2026.md").read_text(encoding="utf-8")
@@ -133,6 +133,6 @@ def test_triage_dry_run_and_commit(mock_vault: Path):
     assert "- [x] 已经完成的旧待办 不应当被修改" in raw_after
 
     # Idempotence: Second commit run should do 0 changes
-    report_second = triage_todo_file(mock_vault, year=2026, commit=True)
-    assert not report_second.committed
-    assert report_second.triaged_count == 0
+    report_second = triage_todos(registry, config, year=2026, commit=True)
+    assert not report_second["committed"]
+    assert report_second["triaged_count"] == 0

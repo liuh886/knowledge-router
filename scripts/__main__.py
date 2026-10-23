@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from .knowledge_router import main
 
 if __name__ == "__main__":

@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "knowledge-router"
-version = "0.1.0"
+version = "0.2.0"
 description = "Turn an existing Obsidian vault into an agent-ready knowledge base without moving a note."
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "KnowledgeRouter contributors" }]
 keywords = ["obsidian", "notes", "rag", "retrieval", "agent", "knowledge-base", "fts5"]
@@ -30,11 +30,11 @@ knowledge_router = "scripts"
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"
-filterwarnings = ["ignore::UserWarning"]
+filterwarnings = ["ignore:Duplicate name:UserWarning:zipfile"]
 
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]

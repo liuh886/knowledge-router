@@ -26,6 +26,7 @@ class TestScaffold(unittest.TestCase):
 
     def tearDown(self) -> None:
         import shutil
+
         shutil.rmtree(self.temp, ignore_errors=True)
 
     def test_scaffold_creates_symbiotic_slices(self) -> None:
@@ -48,6 +49,11 @@ class TestScaffold(unittest.TestCase):
         self.assertIn("Active Focus", focus)
         self.assertIn("North Star", focus)
         self.assertIn("Active Battlegrounds", focus)
+        self.assertTrue(focus.startswith("# "))
+        self.assertIn("\n## ", focus)
+        idea = (self.vault / "000_Inbox" / f"idea.{year}.md").read_text(encoding="utf-8")
+        self.assertTrue(idea.startswith("---\ntitle:"))
+        self.assertIn("\n---\n\n# ", idea)
 
     def test_scaffold_non_destructive_on_existing_files(self) -> None:
         (self.vault / "000_Inbox").mkdir(parents=True)
@@ -76,6 +82,22 @@ class TestScaffold(unittest.TestCase):
         registry = VaultRegistry(self.state)
         resolved = registry.resolve("test-symbiotic")
         self.assertEqual(resolved.root_path, self.vault.resolve())
+        self.assertEqual(resolved.write_policy, "off")
+
+    def test_scaffold_refuses_linked_directory(self) -> None:
+        self.vault.mkdir()
+        outside = self.temp / "outside"
+        outside.mkdir()
+        sentinel = outside / "sentinel.md"
+        sentinel.write_bytes(b"keep")
+        try:
+            (self.vault / "000_Inbox").symlink_to(outside, target_is_directory=True)
+        except OSError:
+            self.skipTest("Symlink creation unavailable")
+        with self.assertRaises(ValueError):
+            scaffold_symbiotic_vault(self.vault, attach=False)
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        self.assertEqual(sentinel.read_bytes(), b"keep")
 
     def test_cli_scaffold(self) -> None:
         cli = SCRIPTS_DIR / "knowledge_router.py"

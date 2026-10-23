@@ -3,52 +3,78 @@
 
 from __future__ import annotations
 
-import os
 import re
-import sys
-from collections import defaultdict
+from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from registry import FileLock, atomic_text_write
+from fts_indexer import ScanReport, scan_notes
+from link_resolver import aliases as parse_aliases
 
 DEFAULT_TAG_RULES: dict[str, list[str]] = {
     "#travel": [
-        "出差", "航班", "机票", "酒店", "高铁", "火车票", "接机", "送机",
-        "登机", "住宿", "签证", "护照", "passport", "flight", "hotel", "travel"
+        "出差",
+        "航班",
+        "机票",
+        "酒店",
+        "高铁",
+        "火车票",
+        "接机",
+        "送机",
+        "登机",
+        "住宿",
+        "签证",
+        "护照",
+        "passport",
+        "flight",
+        "hotel",
+        "travel",
     ],
-    "#Qatar": [
-        "多哈", "卡塔尔", "qatar", "doha", "qg", "qatargas", "noc", "north field"
-    ],
+    "#Qatar": ["多哈", "卡塔尔", "qatar", "doha", "qg", "qatargas", "noc", "north field"],
     "#newbusiness": [
-        "商务", "客户", "投标", "招标", "标书", "合同", "报价", "签约",
-        "询价", "商机", "拜访", "回款", "垫付款", "新业务", "new business", "bidding", "proposal"
+        "商务",
+        "客户",
+        "投标",
+        "招标",
+        "标书",
+        "合同",
+        "报价",
+        "签约",
+        "询价",
+        "商机",
+        "拜访",
+        "回款",
+        "垫付款",
+        "新业务",
+        "new business",
+        "bidding",
+        "proposal",
     ],
     "#research": [
-        "论文", "审稿", "实验", "模型", "水文", "冰川", "遥感", "geoutils",
-        "xdem", "降水", "气象", "科研", "paper", "manuscript", "experiment", "model"
+        "论文",
+        "审稿",
+        "实验",
+        "模型",
+        "水文",
+        "冰川",
+        "遥感",
+        "geoutils",
+        "xdem",
+        "降水",
+        "气象",
+        "科研",
+        "paper",
+        "manuscript",
+        "experiment",
+        "model",
     ],
-    "#energy": [
-        "新能源", "光伏", "水面光伏", "风电", "储能", "海上风电", "ccs", "ccus", "碳捕集"
-    ],
-    "#meeting": [
-        "开会", "例会", "会议", "周会", "月会", "讨论", "商量", "拜访", "meeting", "sync"
-    ],
+    "#energy": ["新能源", "光伏", "水面光伏", "风电", "储能", "海上风电", "ccs", "ccus", "碳捕集"],
+    "#meeting": ["开会", "例会", "会议", "周会", "月会", "讨论", "商量", "拜访", "meeting", "sync"],
 }
 
-# Non-contact files to skip under contact directories
-_NON_CONTACT_STEMS = frozenset(
-    {
-        "bgp - onboard",
-        "interveiw_20260124",
-        "年度工作总结",
-        "新业务推进问题访谈纪要与行动报告",
-        "contact_radar",
-        "zhihao liu",
-    }
-)
+_NON_CONTACT_STEMS = frozenset({"contact_radar", "readme", "index", "template", "模板"})
 
 
 @dataclass
@@ -92,203 +118,111 @@ class TriageReport:
 
 
 class ContactResolver:
-    """Discovers contact notes and resolves text mentions to canonical [[wikilinks]]."""
+    """Read a verified snapshot; paths are identities and aliases retain ambiguity."""
 
-    def __init__(self, vault_root: Path) -> None:
+    def __init__(self, vault_root: Path, *, source_scan: ScanReport | None = None) -> None:
         self.vault_root = vault_root.resolve()
+        self.scan = source_scan or scan_notes(self.vault_root)
+        if self.scan.skipped_decode or self.scan.skipped_io:
+            raise ValueError("Contact resolution requires a complete readable source scan")
+        self.notes = {note.path: note for note in self.scan.records}
         self.entities: dict[str, ContactEntity] = {}
         self.alias_to_canonical: dict[str, str] = {}
+        self.alias_candidates: dict[str, set[str]] = defaultdict(set)
         self.combined_regex: re.Pattern[str] | None = None
-        self._load_contacts()
-
-    def _find_contact_dir(self) -> Path | None:
-        candidate = self.vault_root / "300_Resources" / "305_Contact"
-        if candidate.is_dir():
-            return candidate
-        for sub in self.vault_root.glob("**/305_Contact"):
-            if sub.is_dir():
-                return sub
-        return None
-
-    def _load_contacts(self) -> None:
-        contact_dir = self._find_contact_dir()
-        if not contact_dir:
-            return
-
-        for path in sorted(contact_dir.rglob("*.md")):
+        counts = Counter(Path(n.path).stem.casefold() for n in self.scan.records)
+        spellings: set[str] = set()
+        for note in self.scan.records:
+            path = Path(note.path)
             stem = path.stem
-            stem_lower = stem.casefold()
-
+            if not any(part.casefold() == "305_contact" for part in path.parts[:-1]):
+                continue
             if (
-                ".workflow" in path.name.lower()
-                or stem_lower in _NON_CONTACT_STEMS
-                or "zhihao liu" in str(path).lower()
+                stem.startswith(("_", "."))
+                or stem.casefold() in _NON_CONTACT_STEMS
+                or ".workflow" in stem.casefold()
+                or re.search(r"(?m)^workflow_family:", note.content)
             ):
                 continue
-
-            try:
-                content = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-
-            # Check if it has a workflow marker in frontmatter
-            fm_match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
-            aliases: list[str] = []
-            if fm_match:
-                fm = fm_match.group(1)
-                if "workflow_family:" in fm:
-                    continue
-                # Parse aliases list
-                alias_block = re.search(r"^aliases:\s*\n((?:\s*-\s*.*\n?)+)", fm, re.MULTILINE)
-                if alias_block:
-                    aliases = [
-                        re.sub(r"^\s*-\s*", "", line).strip(" '\"")
-                        for line in alias_block.group(1).splitlines()
-                        if line.strip()
-                    ]
-                else:
-                    inline = re.search(r"^aliases:\s*\[(.*?)\]", fm, re.MULTILINE)
-                    if inline:
-                        aliases = [a.strip(" '\"") for a in inline.group(1).split(",") if a.strip()]
-                    else:
-                        single = re.search(r"^alias:\s*(.*)", fm, re.MULTILINE)
-                        if single:
-                            val = single.group(1).strip(" '\"")
-                            if val:
-                                aliases = [val]
-
-            h1_match = re.search(r"^#\s+(.+)$", content, re.MULTILINE)
-            if h1_match:
-                h1_title = h1_match.group(1).strip()
-                if (
-                    h1_title
-                    and len(h1_title) >= 2
-                    and h1_title not in aliases
-                    and h1_title != stem
-                ):
-                    aliases.append(h1_title)
-
-            chinese_parts = re.findall(r"[\u4e00-\u9fa5]+", stem)
-            chinese_name = "".join(chinese_parts) if chinese_parts else ""
-            english_name = re.sub(r"[\u4e00-\u9fa5]+", "", stem).strip().replace("_", " ")
-
-            rel_path = str(path.relative_to(self.vault_root)).replace("\\", "/")
+            names = parse_aliases(note.content)
+            title = re.search(r"(?m)^#[ \t]+(.+)$", note.content)
+            if title and title.group(1).strip() != stem:
+                names.append(title.group(1).strip())
+            chinese_name = "".join(re.findall(r"[\u4e00-\u9fff]+", stem))
+            english_name = re.sub(r"[\u4e00-\u9fff]+", "", stem).strip().replace("_", " ")
+            canonical = stem if counts[stem.casefold()] == 1 else note.path[:-3]
             entity = ContactEntity(
-                canonical=stem,
-                relative_path=rel_path,
-                chinese_name=chinese_name,
-                english_name=english_name,
-                aliases=aliases,
+                canonical, note.path, chinese_name, english_name, sorted(set(names))
             )
-            self.entities[stem] = entity
-
-            # Populate alias mapping
-            self.alias_to_canonical[stem] = stem
-            if chinese_name and len(chinese_name) >= 2:
-                self.alias_to_canonical.setdefault(chinese_name, stem)
-            if english_name and len(english_name) >= 3:
-                self.alias_to_canonical.setdefault(english_name, stem)
-            for a in aliases:
-                if len(a) >= 2:
-                    self.alias_to_canonical.setdefault(a, stem)
-
-        # Build single-pass regular expression sorted by length descending
-        if not self.alias_to_canonical:
-            self.combined_regex = None
-            return
-
-        sorted_aliases = sorted(
-            self.alias_to_canonical.keys(), key=lambda x: len(x), reverse=True
-        )
-        regex_parts = []
-        for alias in sorted_aliases:
-            escaped = re.escape(alias)
-            is_ascii = all(ord(ch) < 128 for ch in alias)
-            if is_ascii:
-                regex_parts.append(r"(?<![a-zA-Z0-9_])" + escaped + r"(?![a-zA-Z0-9_])")
-            else:
-                regex_parts.append(escaped)
-
-        self.combined_regex = re.compile("|".join(regex_parts), re.IGNORECASE)
+            self.entities[canonical] = entity
+            for name in {stem, canonical, chinese_name, english_name, *names}:
+                if len(name) >= 2:
+                    spellings.add(name)
+                    self.alias_candidates[name.casefold()].add(canonical)
+        for name in spellings:
+            owners = self.alias_candidates[name.casefold()]
+            if len(owners) == 1:
+                self.alias_to_canonical[name] = next(iter(owners))
+        unique = sorted(spellings, key=lambda x: (-len(x), x))
+        patterns = []
+        for name in unique:
+            escaped = re.escape(name)
+            patterns.append(
+                r"(?<![a-zA-Z0-9_])" + escaped + r"(?![a-zA-Z0-9_])" if name.isascii() else escaped
+            )
+        if patterns:
+            self.combined_regex = re.compile("|".join(patterns), re.IGNORECASE)
 
     def match_contact(self, query: str) -> tuple[ContactEntity | None, list[str]]:
-        """Match a query string to a ContactEntity by exact alias, case-insensitive, or substring."""
-        q = query.strip()
+        q = query.strip().replace("\\", "/")
         if not q:
             return None, []
-
-        # 1. Exact alias match
-        canon = self.alias_to_canonical.get(q)
-        if not canon:
-            # 2. Case-insensitive match
-            for k, v in self.alias_to_canonical.items():
-                if k.casefold() == q.casefold():
-                    canon = v
-                    break
-        if not canon:
-            # 3. Substring match
-            candidates: list[str] = []
-            for k, v in self.alias_to_canonical.items():
-                if q.casefold() in k.casefold() or k.casefold() in q.casefold():
-                    if v not in candidates:
-                        candidates.append(v)
-            if len(candidates) == 1:
-                canon = candidates[0]
-            elif candidates:
-                return None, candidates
-
-        if canon and canon in self.entities:
-            return self.entities[canon], []
-        return None, []
-
+        paths = [
+            e
+            for e in self.entities.values()
+            if q.casefold() in {e.relative_path.casefold(), e.relative_path[:-3].casefold()}
+        ]
+        if len(paths) == 1:
+            return paths[0], []
+        owners = self.alias_candidates.get(q.casefold())
+        if owners is None:
+            owners = {
+                owner
+                for alias, values in self.alias_candidates.items()
+                if q.casefold() in alias
+                for owner in values
+            }
+        if len(owners) == 1:
+            return self.entities[next(iter(owners))], []
+        return None, sorted(owners)
 
     def link_entities(self, text: str) -> tuple[str, list[str]]:
-        """Safely link contact mentions outside existing links and tags."""
-        if not self.combined_regex or not self.alias_to_canonical:
+        if not self.combined_regex:
             return text, []
-
-        protected_re = re.compile(
-            r"(\[\[[^\]]+\]\]|\[[^\]]+\]\([^\)]+\)|https?://\S+|\[\d{4}-\d{2}-\d{2}[^\]]*\]|#[a-zA-Z0-9_\u4e00-\u9fa5/-]+|^-\s*\[[ xX]\]\s*[⏳📌💡]?)"
+        protected = re.compile(
+            r"(\[\[[^\]]+\]\]|\[[^\]]+\]\([^\)]+\)|https?://\S+|"
+            r"\[\d{4}-\d{2}-\d{2}[^\]]*\]|#[a-zA-Z0-9_\u4e00-\u9fff/-]+)"
         )
+        contacts: set[str] = set()
 
-        tokens: list[tuple[bool, str]] = []
-        last_idx = 0
-        for m in protected_re.finditer(text):
-            start, end = m.span()
-            if start > last_idx:
-                tokens.append((False, text[last_idx:start]))
-            tokens.append((True, text[start:end]))
-            last_idx = end
-        if last_idx < len(text):
-            tokens.append((False, text[last_idx:]))
+        def replace(match: re.Match[str]) -> str:
+            alias = match.group(0)
+            owners = self.alias_candidates[alias.casefold()]
+            if len(owners) != 1:
+                return alias
+            canonical = next(iter(owners))
+            contacts.add(canonical)
+            return f"[[{canonical}]]" if alias == canonical else f"[[{canonical}|{alias}]]"
 
-        matched_contacts: set[str] = set()
-        new_tokens: list[str] = []
-
-        for is_prot, seg in tokens:
-            if is_prot:
-                new_tokens.append(seg)
-                continue
-
-            def _replace_match(m: re.Match[str]) -> str:
-                matched_alias = m.group(0)
-                canon = self.alias_to_canonical.get(matched_alias)
-                if not canon:
-                    for k, v in self.alias_to_canonical.items():
-                        if k.casefold() == matched_alias.casefold():
-                            canon = v
-                            break
-                if not canon:
-                    return matched_alias
-                matched_contacts.add(canon)
-                if matched_alias == canon:
-                    return f"[[{canon}]]"
-                return f"[[{canon}|{matched_alias}]]"
-
-            replaced = self.combined_regex.sub(_replace_match, seg)
-            new_tokens.append(replaced)
-
-        return "".join(new_tokens), sorted(list(matched_contacts))
+        pieces = []
+        previous = 0
+        for match in protected.finditer(text):
+            pieces.extend(
+                [self.combined_regex.sub(replace, text[previous : match.start()]), match.group()]
+            )
+            previous = match.end()
+        pieces.append(self.combined_regex.sub(replace, text[previous:]))
+        return "".join(pieces), sorted(contacts)
 
 
 class TagClassifier:
@@ -334,97 +268,61 @@ class TagClassifier:
         return new_line, tags_to_add
 
 
-def triage_todo_file(
-    vault_root: Path,
-    *,
-    vault_name: str = "",
-    year: int | None = None,
-    commit: bool = False,
-    lock_path: Path | None = None,
-) -> TriageReport:
-    """Triage inbox todo file with contact entity linking and multi-dimensional tagging."""
-    vault_root = vault_root.resolve()
-    current_year = year or datetime.now().year
-    target_rel = f"000_Inbox/todo.{current_year}.md"
-    target_path = vault_root / "000_Inbox" / f"todo.{current_year}.md"
-
-    if not target_path.is_file():
-        return TriageReport(
-            vault=vault_name or vault_root.name,
-            target_file=target_rel,
-            year=current_year,
-            committed=commit,
-        )
-
-    if commit:
-        drain_quick_capture_buffer(
-            vault_root, vault_name=vault_name, lock_path=lock_path
-        )
-
-    resolver = ContactResolver(vault_root)
+def render_triage(
+    content: str, resolver: ContactResolver, *, vault_name: str, year: int
+) -> tuple[TriageReport, str]:
+    """Analyze a snapshot and return a proposal; never mutate a source."""
+    lines = content.splitlines(keepends=True)
     classifier = TagClassifier()
-
-    raw_text = target_path.read_text(encoding="utf-8")
-    lines = raw_text.splitlines(keepends=True)
-
-    new_lines: list[str] = []
     diffs: list[TriageDiff] = []
-    all_contacts: set[str] = set()
-    all_tags: set[str] = set()
+    output: list[str] = []
+    contacts: set[str] = set()
+    tags: set[str] = set()
     todo_count = 0
-
-    for i, line in enumerate(lines):
-        stripped = line.lstrip()
-        # Process uncompleted todo lines: starts with - [ ]
-        if stripped.startswith("- [ ]"):
-            todo_count += 1
-            original_line = line.rstrip("\r\n")
-
-            # 1. Entity linking
-            linked_line, contacts = resolver.link_entities(original_line)
-            # 2. Tagging
-            triaged_line, tags = classifier.classify_and_tag(linked_line)
-
-            if triaged_line != original_line:
-                diffs.append(
-                    TriageDiff(
-                        line_number=i + 1,
-                        original=original_line,
-                        triaged=triaged_line,
-                        contacts=contacts,
-                        tags=tags,
-                    )
-                )
-                all_contacts.update(contacts)
-                all_tags.update(tags)
-                newline_char = "\r\n" if line.endswith("\r\n") else "\n"
-                new_lines.append(triaged_line + newline_char)
-            else:
-                new_lines.append(line)
-        else:
-            new_lines.append(line)
-
-    if commit and diffs:
-        # Atomic commit
-        full_content = "".join(new_lines)
-        if lock_path is not None:
-            with FileLock(lock_path):
-                atomic_text_write(target_path, full_content)
-        else:
-            atomic_text_write(target_path, full_content)
-
-    return TriageReport(
-        vault=vault_name or vault_root.name,
-        target_file=target_rel,
-        year=current_year,
-        committed=commit and bool(diffs),
+    fenced = False
+    for number, line in enumerate(lines, 1):
+        if line.lstrip().startswith(("```", "~~~")):
+            fenced = not fenced
+        if fenced or not line.lstrip().startswith("- [ ]"):
+            output.append(line)
+            continue
+        todo_count += 1
+        original = line.rstrip("\r\n")
+        linked, people = resolver.link_entities(original)
+        triaged, applied_tags = classifier.classify_and_tag(linked)
+        if triaged != original:
+            diffs.append(TriageDiff(number, original, triaged, people, applied_tags))
+            contacts.update(people)
+            tags.update(applied_tags)
+        output.append(triaged + line[len(original) :])
+    report = TriageReport(
+        vault=vault_name,
+        target_file=f"000_Inbox/todo.{year}.md",
+        year=year,
+        committed=False,
         total_lines=len(lines),
         todo_count=todo_count,
         triaged_count=len(diffs),
         diffs=diffs,
-        contacts_matched=sorted(list(all_contacts)),
-        tags_applied=sorted(list(all_tags)),
+        contacts_matched=sorted(contacts),
+        tags_applied=sorted(tags),
     )
+    return report, "".join(output)
+
+
+def triage_todo_file(
+    vault_root: Path, *, vault_name: str = "", year: int | None = None
+) -> TriageReport:
+    """Read-only compatibility analysis. Commits belong to memory_service.triage_todos."""
+    resolver = ContactResolver(vault_root)
+    current_year = year or datetime.now().year
+    note = resolver.notes.get(f"000_Inbox/todo.{current_year}.md")
+    return render_triage(
+        note.content if note else "",
+        resolver,
+        vault_name=vault_name or vault_root.name,
+        year=current_year,
+    )[0]
 
 
 def format_triage_summary(report: TriageReport) -> str:
@@ -460,306 +358,15 @@ def format_triage_summary(report: TriageReport) -> str:
     return "\n".join(lines)
 
 
-def append_contact_log(
-    vault_root: Path,
-    target: str,
-    text: str,
-    *,
-    vault_name: str = "",
-    lock_path: Path | None = None,
-) -> dict[str, Any]:
-    """Match a contact in 305_Contact/ and append interaction text under ## Log."""
-    vault_root = vault_root.resolve()
-    resolver = ContactResolver(vault_root)
-    entity, candidates = resolver.match_contact(target)
-
-    if not entity:
-        if candidates:
-            return {
-                "status": "ambiguous",
-                "target": target,
-                "message": f"找到多个匹配联系人: {', '.join(candidates)}，请指定更精确的名称",
-                "candidates": candidates,
-            }
-        return {
-            "status": "not_found",
-            "target": target,
-            "message": f"未在 305_Contact/ 中找到匹配的联系人: '{target}'",
-            "candidates": [],
-        }
-
-    note_path = vault_root / entity.relative_path
-    if not note_path.is_file():
-        return {
-            "status": "error",
-            "target": target,
-            "message": f"联系人笔记文件不存在: {entity.relative_path}",
-        }
-
-    raw = note_path.read_text(encoding="utf-8")
-    now_str = datetime.now().strftime("%Y-%m-%d %H:%M")
-    entry_line = f"- [{now_str}] {text.strip()}"
-
-    # Check for Log heading: ## Log, ## Interaction Log, ## Interaction History, ## 汇报记录 (Log), etc.
-    log_match = re.search(
-        r"(?mi)^##\s+(?:.*(?:Log|Interaction History|Interaction Log).*|互动记录|沟通记录|记录)\s*$",
-        raw,
-    )
-    if log_match:
-        # Find if there is a next section ## after this heading
-        start_pos = log_match.end()
-        next_heading = re.search(r"(?m)^##\s+", raw[start_pos:])
-        if next_heading:
-            insert_pos = start_pos + next_heading.start()
-            new_content = (
-                raw[:insert_pos].rstrip()
-                + f"\n{entry_line}\n\n"
-                + raw[insert_pos:].lstrip()
-            )
-        else:
-            new_content = raw.rstrip() + f"\n{entry_line}\n"
-    else:
-        # Append ## Log at the end of the note
-        new_content = raw.rstrip() + f"\n\n## Log\n{entry_line}\n"
-
-    if lock_path is not None:
-        with FileLock(lock_path):
-            atomic_text_write(note_path, new_content)
-    else:
-        atomic_text_write(note_path, new_content)
-
-    return {
-        "status": "success",
-        "canonical": entity.canonical,
-        "relative_path": entity.relative_path,
-        "entry": entry_line,
-        "message": f"👤 已成功追加记录至联系人 [[{entity.canonical}]]:\n{entry_line}",
-    }
-
-
-def drain_quick_capture_buffer(
-    vault_root: Path,
-    *,
-    vault_name: str = "",
-    lock_path: Path | None = None,
-) -> dict[str, Any]:
-    """Drain backward-compatibility buffer (000_Inbox/Quick_Capture.md) into annual streams."""
-    vault_root = vault_root.resolve()
-    buffer_file = vault_root / "000_Inbox" / "Quick_Capture.md"
-    if not buffer_file.is_file():
-        return {"status": "skipped", "message": "Buffer file does not exist"}
-
-    try:
-        content = buffer_file.read_text(encoding="utf-8", errors="ignore")
-    except OSError:
-        return {"status": "error", "message": "Cannot read buffer file"}
-
-    lines = content.splitlines()
-    entries_to_route = []
-    header_lines = []
-
-    in_header = True
-    for line in lines:
-        stripped = line.strip()
-        if (
-            stripped.startswith("- [ ]")
-            or stripped.startswith("- [x]")
-            or stripped.startswith("- 💡")
-            or stripped.startswith("- 📌")
-        ):
-            in_header = False
-            entries_to_route.append(stripped)
-        elif not in_header:
-            if stripped:
-                entries_to_route.append(stripped)
-        else:
-            header_lines.append(line)
-
-    if not entries_to_route:
-        return {"status": "clean", "routed_count": 0}
-
-    routed = []
-    for entry in entries_to_route:
-        if entry.startswith(("- [ ]", "- [x]")):
-            m = re.match(
-                r"^-\s*\[[ x]\]\s*(?:⏳\s*(?:\d{4}-\d{2}-\d{2}\s*)?(?:\d{2}:\d{2}\s*)?)?(.*)$",
-                entry,
-            )
-            task_text = m.group(1).strip() if m else entry[5:].strip()
-            task_text = re.sub(
-                r"\s*#todo/(?:inbox|next|ing|someday)\b", "", task_text
-            ).strip()
-            if task_text:
-                append_inbox_stream(
-                    vault_root,
-                    "todo",
-                    task_text,
-                    vault_name=vault_name,
-                    lock_path=lock_path,
-                )
-                routed.append(("todo", task_text))
-        elif entry.startswith("- 💡"):
-            m = re.match(
-                r"^-\s*💡\s*(?:\[\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}\]\s*)?(.*)$", entry
-            )
-            idea_text = m.group(1).strip() if m else entry[3:].strip()
-            idea_text = re.sub(
-                r"\s*#idea/(?:seed|grow|evergreen)\b", "", idea_text
-            ).strip()
-            if idea_text:
-                append_inbox_stream(
-                    vault_root,
-                    "idea",
-                    idea_text,
-                    vault_name=vault_name,
-                    lock_path=lock_path,
-                )
-                routed.append(("idea", idea_text))
-        else:
-            m = re.match(
-                r"^-\s*(?:📌\s*)?(?:\[\d{4}-\d{2}-\d{2}\s*\d{2}:\d{2}\]\s*)?(.*)$",
-                entry,
-            )
-            memo_text = m.group(1).strip() if m else entry.lstrip("- *").strip()
-            if memo_text:
-                append_inbox_stream(
-                    vault_root,
-                    "memo",
-                    memo_text,
-                    vault_name=vault_name,
-                    lock_path=lock_path,
-                )
-                routed.append(("memo", memo_text))
-
-    clean_content = "\n".join(header_lines).rstrip() + "\n\n"
-    if lock_path:
-        with FileLock(lock_path):
-            atomic_text_write(buffer_file, clean_content)
-    else:
-        atomic_text_write(buffer_file, clean_content)
-
-    return {"status": "success", "routed_count": len(routed), "routed": routed}
-
-
-def append_inbox_stream(
-    vault_root: Path,
-    capture_type: str,
-    text: str,
-    *,
-    vault_name: str = "",
-    year: int | None = None,
-    lock_path: Path | None = None,
-) -> dict[str, Any]:
-    """Append a captured entry (todo, memo, idea) to 000_Inbox/<type>.<year>.md."""
-    vault_root = vault_root.resolve()
-    capture_type = capture_type.lower().strip()
-    if capture_type not in {"todo", "memo", "idea"}:
-        raise ValueError(
-            f"Invalid capture type '{capture_type}'. Must be 'todo', 'memo', or 'idea'."
-        )
-
-    now = datetime.now()
-    cur_year = year or now.year
-    cur_month = now.strftime("%Y-%m")
-    timestamp = now.strftime("%Y-%m-%d %H:%M")
-
-    inbox_dir = vault_root / "000_Inbox"
-    inbox_dir.mkdir(parents=True, exist_ok=True)
-    file_path = inbox_dir / f"{capture_type}.{cur_year}.md"
-
-    # Prefix and tags
-    if capture_type == "todo":
-        prefix = "- [ ] ⏳"
-        tag = "#todo/inbox"
-    elif capture_type == "memo":
-        prefix = "- 📌"
-        tag = ""
-    else:  # idea
-        prefix = "- 💡"
-        tag = "#idea/seed"
-
-    tag_suffix = f" {tag}" if tag else ""
-    if capture_type == "todo":
-        raw_entry = f"- [ ] ⏳ {timestamp} {text.strip()}{tag_suffix}"
-    else:
-        raw_entry = f"{prefix} [{timestamp}] {text.strip()}{tag_suffix}"
-
-    # Header initialization if file does not exist
-    if not file_path.is_file():
-        title_map = {"todo": "📋 Todo", "memo": "📝 Memo", "idea": "💡 Idea"}
-        title_name = title_map.get(capture_type, capture_type.capitalize())
-        header = (
-            f"---\n"
-            f'title: "{title_name} {cur_year}"\n'
-            f"date: {cur_year}-01-01\n"
-            f"tags:\n"
-            f"  - capture/{capture_type}\n"
-            f"type: capture\n"
-            f"year: {cur_year}\n"
-            f"---\n\n"
-            f"# {title_name} {cur_year}\n\n"
-        )
-        content = header
-    else:
-        content = file_path.read_text(encoding="utf-8")
-
-    month_heading = f"## {cur_month}"
-    month_match = re.search(rf"(?m)^##\s+{re.escape(cur_month)}\s*$", content)
-
-    if not month_match:
-        content = content.rstrip() + f"\n\n{month_heading}\n\n{raw_entry}\n"
-    else:
-        # Month heading exists. Find insertion point (before next ## section or at end)
-        start_pos = month_match.end()
-        next_heading = re.search(r"(?m)^##\s+", content[start_pos:])
-        if next_heading:
-            insert_pos = start_pos + next_heading.start()
-            content = (
-                content[:insert_pos].rstrip()
-                + f"\n{raw_entry}\n\n"
-                + content[insert_pos:].lstrip()
-            )
-        else:
-            content = content.rstrip() + f"\n{raw_entry}\n"
-
-    # Write file atomically
-    if lock_path is not None:
-        with FileLock(lock_path):
-            atomic_text_write(file_path, content)
-    else:
-        atomic_text_write(file_path, content)
-
-    # For todo, immediately run triage so entities and tags are linked on the fly!
-    triage_result = None
-    final_entry = raw_entry
-    if capture_type == "todo":
-        triage_report = triage_todo_file(
-            vault_root,
-            vault_name=vault_name,
-            year=cur_year,
-            commit=True,
-            lock_path=lock_path,
-        )
-        for diff in triage_report.diffs:
-            if diff.original.strip() == raw_entry.strip():
-                final_entry = diff.triaged
-                triage_result = {
-                    "contacts": diff.contacts,
-                    "tags": diff.tags,
-                }
-                break
-
-    icon_map = {"todo": "📋", "memo": "📝", "idea": "💡"}
-    icon = icon_map.get(capture_type, "📋")
-    return {
-        "status": "success",
-        "type": capture_type,
-        "year": cur_year,
-        "file": f"000_Inbox/{capture_type}.{cur_year}.md",
-        "entry": final_entry,
-        "triage": triage_result,
-        "message": f"{icon} 已记录至 {capture_type}.{cur_year}.md [{cur_month}]:\n{final_entry}",
-    }
+def _mentions_contact(resolver: ContactResolver, entity: ContactEntity, text: str) -> bool:
+    for target in re.findall(r"\[\[([^\]|]+)(?:\|[^\]]*)?\]\]", text):
+        target = target.split("#", 1)[0].removesuffix(".md")
+        if target.casefold() == entity.relative_path[:-3].casefold():
+            return True
+        owners = resolver.alias_candidates.get(target.casefold(), set())
+        if len(owners) == 1 and entity.canonical in owners:
+            return True
+    return entity.canonical in resolver.link_entities(text)[1]
 
 
 def get_contact_radar(vault_root: Path, year: int | None = None) -> dict[str, Any]:
@@ -770,44 +377,21 @@ def get_contact_radar(vault_root: Path, year: int | None = None) -> dict[str, An
     now = datetime.now()
 
     # Load open tasks from todo.YYYY.md
-    todo_file = vault_root / "000_Inbox" / f"todo.{cur_year}.md"
+    todo_note = resolver.notes.get(f"000_Inbox/todo.{cur_year}.md")
     open_tasks: list[str] = []
-    if todo_file.is_file():
-        for line in todo_file.read_text(encoding="utf-8", errors="ignore").splitlines():
+    if todo_note:
+        for line in todo_note.content.splitlines():
             if re.match(r"^\s*-\s*\[ \]", line):
                 open_tasks.append(line.strip())
 
     items = []
     for canon, entity in sorted(resolver.entities.items()):
-        c_path = vault_root / entity.relative_path
-        c_content = (
-            c_path.read_text(encoding="utf-8", errors="ignore")
-            if c_path.is_file()
-            else ""
-        )
+        c_content = resolver.notes[entity.relative_path].content
 
-        # Match tasks mentioning this contact
-        all_names = (
-            [canon]
-            + entity.aliases
-            + ([entity.chinese_name] if entity.chinese_name else [])
-        )
-        matched_tasks = []
-        for t in open_tasks:
-            for name in all_names:
-                if len(name) >= 2 and (
-                    f"[[{canon}" in t
-                    or f"|{name}]]" in t
-                    or f"[[{name}]]" in t
-                    or name in t
-                ):
-                    matched_tasks.append(t)
-                    break
+        matched_tasks = [task for task in open_tasks if _mentions_contact(resolver, entity, task)]
 
         # Find interaction dates from ## Log or text
-        log_dates = re.findall(
-            r"\[(\d{4}-\d{2}-\d{2})\]|\b(\d{4}-\d{2}-\d{2})\b", c_content
-        )
+        log_dates = re.findall(r"\[(\d{4}-\d{2}-\d{2})\]|\b(\d{4}-\d{2}-\d{2})\b", c_content)
         dates = []
         for d1, d2 in log_dates:
             d = d1 or d2
@@ -868,21 +452,20 @@ def get_contact_radar(vault_root: Path, year: int | None = None) -> dict[str, An
     }
 
 
-def get_contact_detail(
-    vault_root: Path, query: str, year: int | None = None
-) -> dict[str, Any]:
+def get_contact_detail(vault_root: Path, query: str, year: int | None = None) -> dict[str, Any]:
     """Retrieve full detail card for a contact including info, pending tasks, recent logs, and projects."""
     vault_root = vault_root.resolve()
     resolver = ContactResolver(vault_root)
     entity, candidates = resolver.match_contact(query)
     if not entity:
-        return {"status": "not_found", "query": query, "candidates": candidates}
+        return {
+            "status": "ambiguous" if candidates else "not_found",
+            "query": query,
+            "candidates": candidates,
+        }
 
     cur_year = year or datetime.now().year
-    c_path = vault_root / entity.relative_path
-    content = (
-        c_path.read_text(encoding="utf-8", errors="ignore") if c_path.is_file() else ""
-    )
+    content = resolver.notes[entity.relative_path].content
 
     # Parse metadata fields
     fields: dict[str, str] = {}
@@ -892,18 +475,12 @@ def get_contact_detail(
             fields[m.group(1).strip().lower()] = m.group(2).strip()
 
     # Find pending tasks
-    todo_file = vault_root / "000_Inbox" / f"todo.{cur_year}.md"
+    todo_note = resolver.notes.get(f"000_Inbox/todo.{cur_year}.md")
     matched_tasks: list[str] = []
-    all_names = (
-        [entity.canonical]
-        + entity.aliases
-        + ([entity.chinese_name] if entity.chinese_name else [])
-    )
-    if todo_file.is_file():
-        for line in todo_file.read_text(encoding="utf-8", errors="ignore").splitlines():
-            if re.match(r"^\s*-\s*\[ \]", line):
-                if any(name in line for name in all_names if len(name) >= 2):
-                    matched_tasks.append(line.strip())
+    if todo_note:
+        for line in todo_note.content.splitlines():
+            if re.match(r"^\s*-\s*\[ \]", line) and _mentions_contact(resolver, entity, line):
+                matched_tasks.append(line.strip())
 
     # Find recent interaction logs from ## Log / ## Interaction History / ## 汇报记录
     interaction_logs: list[str] = []
@@ -919,22 +496,16 @@ def get_contact_detail(
         if in_log and line_s.startswith(("- ", "* ")):
             interaction_logs.append(line_s)
 
-    # Find associated projects from 100_Project/
-    associated_projects: list[str] = []
-    prj_dir = vault_root / "100_Project"
-    if prj_dir.is_dir():
-        for prj_folder in prj_dir.iterdir():
-            if prj_folder.is_dir() and not prj_folder.name.startswith("."):
-                found = False
-                for p_file in prj_folder.glob("*.md"):
-                    try:
-                        prj_text = p_file.read_text(encoding="utf-8", errors="ignore")
-                        if any(n in prj_text for n in all_names if len(n) >= 2):
-                            associated_projects.append(prj_folder.name)
-                            found = True
-                            break
-                    except OSError:
-                        pass
+    # Project evidence comes from the same verified snapshot.
+    associated_projects = sorted(
+        {
+            note.path.split("/")[1]
+            for note in resolver.scan.records
+            if note.path.startswith("100_Project/")
+            and len(note.path.split("/")) >= 3
+            and _mentions_contact(resolver, entity, note.content)
+        }
+    )
 
     return {
         "status": "success",
@@ -948,5 +519,3 @@ def get_contact_detail(
         "recent_logs": interaction_logs[-5:],
         "associated_projects": associated_projects,
     }
-
-
