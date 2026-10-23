@@ -18,7 +18,8 @@ portable description; substitute your own Vault and state-root paths.
 
 ## External state root
 
-Production state defaults to `~/.ductor/vaults` and is deliberately kept outside the Vault.
+Production state defaults to `~/.knowledge-router/vaults` (or legacy `~/.ductor/vaults`,
+configurable via `KNOWLEDGE_ROUTER_STATE_ROOT`) and is deliberately kept outside the Vault.
 It contains:
 
 - `registry.json`: Vault roots, write policy, active index/catalog pointers.

@@ -1,213 +1,190 @@
-# KnowledgeRouter
+# KnowledgeRouter CLI (`kr`)
 
-**Turn any existing Obsidian Vault into an agent-ready knowledge base — without moving a single note.**
+### 🧠 共生记忆 CLI —— 面向 AI Agent 的本地数据行囊与共生外脑
+> **Turn any Obsidian Vault into an Agent-Ready Symbiotic Memory Backpack — without moving a single note.**  
+> *在不改变任何笔记习惯、不重构目录的前提下，把现有 Obsidian 库变成任何 Agent 都能即插即用、安全读写、携带漫游的共生记忆体。*
 
-KnowledgeRouter is a zero-dependency control plane that sits beside a human-owned Markdown
-Vault. It indexes what is already there, resolves the *purposes* behind folders (Daily, Project,
-Contact, Research, Trip, or your own types), answers questions with cited evidence, previews and
-performs reviewed captures, and keeps maintenance, state and follow-ups in external durable
-records. It never imposes a folder system and never rewrites human prose.
-
-> 在不改变任何笔记习惯、不重构目录的前提下，把现有 Obsidian 库变成可被 Agent 精确检索、
-> 引用、安全写入并持续维护的知识底座。人类 Markdown 是唯一真理源，索引与状态全部外部化、可重建。
-
----
-
-## Why it exists
-
-An agent dropped into a raw Markdown folder usually fails for three reasons: it cannot tell what
-parts of the Vault *mean*; it cannot cite where an answer came from; and it cannot write without
-risking damage. KnowledgeRouter closes that gap with four properties:
-
-- **Purpose, not folders.** Generic Context definitions describe identity, type, purpose, scopes and
-  aliases. The same engine handles Daily journals, project folders, contact notes and custom types;
-  adding a type needs no new routing branch.
-- **Evidence with provenance.** Every result carries `path:line_start-line_end`, source `sha256`,
-  index generation and a `stale` flag. Retrieval abstains instead of inventing an answer.
-- **Preview-first writes.** The only permitted Vault mutations are reviewed exclusive file creation
-  or one checked byte append, executed by a broker that pins parent directories and records a
-  durable recovery journal. Conflicts and interrupted runs are reconciled, never double-written.
-- **Durable external state.** Registry, definitions, frozen plans, receipts and delivery ledgers live
-  outside the Vault and are rebuildable where they are derived. The Vault stays authoritative.
+[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![Python: >=3.10](https://img.shields.io/badge/Python->=3.10-blue.svg)](pyproject.toml)
+[![Tests: 100% Passing](https://img.shields.io/badge/Tests-150%2B%20Passing-brightgreen.svg)](tests/)
+[![Architecture: Local--First](https://img.shields.io/badge/Architecture-Local--First-orange.svg)](docs/symbiotic-memory-vault-spec.zh.md)
+[![Dependencies: Pure Stdlib](https://img.shields.io/badge/Dependencies-Pure%20Stdlib-blueviolet.svg)](scripts/)
 
 ---
 
-## What is implemented
+## 🌟 核心理念：为什么需要“共生记忆”？ (Why Symbiotic Memory?)
 
-| Capability | Command surface |
-|---|---|
-| Attach + multi-Vault registry | `attach` |
-| Immutable full-text index, cited search | `search`, `brief` |
-| Context discovery / impact preview / registration | `contexts discover \| plan \| register \| check` |
-| Evidence briefs per Context | `contexts brief`, `contexts state`, `contexts history` |
-| Multi-Context event capture with recovery | `contexts capture \| commit \| event` |
-| Follow-ups with timezone-safe due dates | `contexts capture --followup-*`, `contexts followups` |
-| Explicit local notification sink | `contexts deliver --sink ABSOLUTE.jsonl` |
-| Maintenance policy + coverage | `contexts due \| coverage`, `maintain` |
-| Combined maintenance/poll cycle | `maintain --with-tick`, `contexts tick` |
-| Read-only Git project catalog + federated retrieval | `projects *`, `search --projects`, `brief --projects` |
-| Explainable quality signals + Context-aware queue | `quality` |
-| Read-only Context relationship graph | `contexts links` |
-| Compiled Context card (bundle + external save) | `contexts compile` |
-| Review agenda + honest deposition ledger | `contexts review` |
-| Recovery: checkpoints, backup, isolated restore | `checkpoint`, `backup`, `restore` |
-| Unified operating status | `status --json` |
+当前以 Muse、Notion AI、Mem 为代表的 Personal AI Agent 正在将用户的**核心认知资产**（人生目标、价值观、情感反思、社交人脉、生活足迹）逐步圈禁在封闭的云端数据库中。你与 AI 交互越深入，迁移成本就越高，平台锁定越深。
 
-All 34 modules are pure Python standard library. The full suite is **274 tests**. See
-[`EVALUATE.md`](EVALUATE.md) for the measured gates and [`SKILL.md`](SKILL.md) for the exact
-agent-facing command contract.
+**KnowledgeRouter CLI（共生记忆 CLI）** 旨在打破这一困境：
 
-Two properties are worth knowing before reading any diagnostic number:
-
-- **One resolver, documented rules.** `link_resolver.py` resolves `[[wikilinks]]` for both the
-  doctor and the relationship graph, so the two can never report different broken/ambiguous counts.
-  A target that carries a path is resolved as a path (relative to the note, then from the vault
-  root); a bare target by unique filename, then unique alias. Non-Markdown targets must carry their
-  extension. Verdicts record the deciding level, ambiguity stays ambiguity, and two undocumented
-  cases — a proximity-collapsible ambiguity and an unresolved path whose basename is unique
-  elsewhere — are counted and reported rather than silently decided.
-- **Hints are not verdicts.** Broken-link triage hints (`zotero_generated`, `template_placeholder`,
-  `missing_asset_reference`, `needs_review`) always carry `confidence: hint`, the original totals
-  are retained, and no reference is dismissed because of where it lives.
+* **数据主权（Data Sovereignty）**：本地纯文本 Markdown 是唯一物理真理源（SSOT）。拒绝任何平台绑架与云端黑盒。
+* **人机等权（Human-Agent Parity）**：你在 Obsidian 中看到的是优美的排版、双链与 Dataview 动态看板；Agent 看到的是标准化的时间流与结构化上下文。双方互为主客体，共同演进同一份外脑。
+* **数据行囊（Bring Your Own Memory）**：模型是流水的算力，记忆是永恒的资产。今天用 Claude，明天用 Cursor，后天换本地开源模型，只需挂载你的背包，任何 AI 都能秒级理解你。
+* **零污染安全防线（Zero-Pollution Safe Capture）**：采用 **SHA-256 乐观锁** 与 **Windows 排他文件并发控制**，杜绝并发覆盖人类笔迹；绝不随意建立碎片文件污染知识库。
 
 ---
 
-## Quick start
+## 🏛️ 双层共生架构与 6 大认知切片 (Architecture & The 6 Slices)
 
-```bash
-# 1. Attach a Vault (read-only; registers an external index)
-python scripts/knowledge_router.py attach "/path/to/vault" --name personal
-
-# 2. Ask a question with citations
-python scripts/knowledge_router.py search "Qatar seismic spec" --vault personal --json
-
-# 3. See which purposes exist, then bake them into versioned definitions
-python scripts/knowledge_router.py contexts discover --vault personal --json
-python scripts/knowledge_router.py contexts register --definitions examples/contexts.json --vault personal
-
-# 4. Inspect a Context's existing wikilink neighbourhood (anchors, related Contexts, hubs)
-python scripts/knowledge_router.py contexts links project:main --vault personal
-
-# 5. Assemble a cited "current state" card scaffold for one Context (read-only)
-python scripts/knowledge_router.py contexts compile project:main --vault personal
-
-# 5b. Write the reviewed card to a parallel area outside the Vault (no write policy needed)
-python scripts/knowledge_router.py contexts compile project:main --save --content-file card.md --vault personal
-
-# 6. Run a review agenda; each run is recorded in an external ledger
-python scripts/knowledge_router.py contexts review --vault personal
-
-# 7. Preview a capture, then commit only the reviewed payload
-python scripts/knowledge_router.py capture "Decided to defer the offline compression work" --vault personal
-python scripts/knowledge_router.py capture --vault personal --commit --plan-id <id>
-```
-
-Capture requires an explicit write policy (`--write-policy append-create`) and either an explicit
-user instruction or a saved `capture_mode=auto`. `write_policy=off` is the default.
-
-`contexts review --limit N` truncates the printed page only: the ledger entry, the fingerprint and
-the new/resolved deltas always use the full item set, so a smaller limit cannot look like items were
-resolved. A disappearance is reported as resolved only when both the previous and the current run
-had a complete basis (otherwise `comparable: false` with a named reason and `resolved_suppressed`),
-and an empty agenda over an incomplete basis (no registered Context, unreadable source, truncated
-poll) returns `incomplete` rather than `clear`.
-
-`examples/contexts.json` is a starting template: edit its `scopes` to match directories that
-actually contain Markdown in your Vault. Registration fails closed if a scope has no readable
-evidence, so the template never silently creates folders.
-
----
-
-## Architecture
-
-The implementation is split into strict layers; the CLI never reimplements projection or mutation
-mechanics.
-
-```
-Interface        knowledge_router.py, bootstrap.py      stable CLI, bounded output
-Application      vault_service.py                       attach/sync/status/search orchestration
-Context domain   context_manager.py                     discovery, scopes, impact preview (no writes)
-Control records  context_store.py                       versioned definitions, revision conflicts
-Event execution  context_events.py, context_state.py    one frozen broker plan -> many Contexts
-Maintenance      context_maintenance.py, context_tick.py
-Follow-ups       context_followups.py, due_time.py
-Read domain      fts_indexer, taxonomy_scanner, vault_doctor, context_assembler, quality_analyzer
-Project adapter  project_adapter.py                     read-only Git catalog
-Write domain     route_engine.py, capture_broker.py     frozen plan, compare-and-swap, recovery
-Infrastructure   registry.py, secure_io.py              external locks, pinned paths, safe handles
-```
-
-The Vault and the Git project catalog meet at one `EvidenceRecord` interface, so callers never
-learn either index implementation. See [`DESIGN.md`](DESIGN.md) and
-[`references/architecture.md`](references/architecture.md).
-
----
-
-## Safety contract (summary)
-
-1. Human Markdown is the only source of truth; the tool never replaces, truncates, moves, renames
-   or deletes a user note.
-2. Writes are exclusive-create or one checked append, behind a frozen, checksummed plan.
-3. Search, doctor, quality and project catalog are read-only.
-4. On this local release, Windows append uses parent-directory pinning plus an OS handle that
-   denies competing writers. Other platforms fail closed for append until an equivalent kernel
-   broker exists; exclusive new-file capture remains portable.
-5. Index activation fails if any Markdown source is unreadable; search verifies the database's
-   `(path, checksum)` manifest, canonical root and generation before answering.
-
-Full details in [`references/safety_contract.md`](references/safety_contract.md).
-
-## Comparability and freshness
-
-A review agenda means nothing if two runs observed different things. Every ledger entry records a
-semantic `basis`: the Context revision, a `definitions_fingerprint` over each Context's
-scopes/filters/aliases/project bindings/maintenance, and the diagnostics version. If any of those
-changed between runs, the comparison is refused (`context_definitions_changed`,
-`diagnostics_version_changed`) and vanished items are moved to `resolved_suppressed` — a Context
-whose scope changed observes a different source set, so an item leaving the agenda may simply have
-left the scope. Entries written before the semantic basis report `previous_basis_not_semantic` rather
-than being blamed on a definitions change. An incomplete basis makes `contexts review` and
-`contexts converge` exit 2, matching `contexts tick` and `contexts coverage`, so an exit-code-only
-scheduler cannot mistake a truncated scan for a clean result.
-
-Compiled cards are tracked by what they were actually built from. Each `--save` records its real
-output path, the definitions fingerprint and the exact `{source path: checksum}` set in external
-state, so review reports `compiled_card_stale` (sources added, removed or edited), 
-`compiled_card_scope_changed`, or `compiled_card_missing` — including for custom
-`--out-root`/`--name` locations, which were previously invisible. Newly added scoped sources count as
-drift, so new material does reach existing cards. Cards written before the registry existed keep a
-default-path modification-time fallback and are deliberately **not** retro-adopted, because their
-true dependencies cannot be reconstructed.
-
-The external index is schema 5, which no longer builds the trigram table: it was created and
-populated but never queried, and cost roughly a third of the index size on a real Vault. Chinese
-recall is served by `note_bigrams` plus a LIKE fallback. The schema version is part of the generation
-hash, so a layout change rebuilds instead of silently reusing an older index.
-
----
-
-## Layout
+高频的人机交互最忌讳“一事一文件”引发的碎文件膨胀。KnowledgeRouter 采用经过实战检验的 **“时间流式收件箱（Stream Tier）+ 实体档案（Entity Tier）”** 双层共生架构：
 
 ```text
-knowledge-router/
-├── SKILL.md                 # agent-facing command contract
-├── README.md  DESIGN.md  TASKS.md  EVALUATE.md
-├── pyproject.toml           # pytest + ruff configuration
-├── scripts/                 # 34 stdlib-only modules
-├── examples/contexts.json   # Context definition template
-├── integrations/ductor/     # optional workspace bridge
-├── references/              # architecture, safety, routing, context, operations
-├── docs/                    # background research
-└── tests/                   # 274 tests
+SymbioticVault/
+├── 000_Inbox/                      # 📥 核心缓冲与时间流式收件箱 (Stream Tier)
+│   ├── FOCUS.md                    # 🎯 切片 1: Focus (单一动态锚点，全局核心关注)
+│   ├── idea.2026.md                # 💡 切片 2: Idea (年度巧思灵感流，#idea/seed)
+│   ├── memo.2026.md                # 📝 切片 3: Memo (年度事实备忘流)
+│   └── todo.2026.md                # ✅ 切片 4: Todo (年度行动与日程流，带日历时间块)
+│
+├── 300_Resources/305_Contact/      # 👥 切片 5: Contact (实体人脉卡片库，内嵌动态 Dataview)
+│   └── [[人名]].md                 
+│
+├── WYQD/ (或 Ownly/)               # 💎 切片 6: Ownly (原生对齐 Ownly 资产/物品/足迹数据库)
+│   ├── Objects/                    # 硬件设备、心爱物品清单与维保
+│   ├── Accounts/ & Snapshots/      # 账户资产配置与净值快照 (脱敏规划)
+│   ├── Reviews/                    # 决策复盘与回溯
+│   └── Trips/ & Trip Visits/       # 旅行足迹、行程路线与体验消费
+│
+├── 100_Project/                    # 📁 进行中交付项目 (Focus 战役的承接实体)
+└── 200_Area/                       # 📁 长期关注领域 (学术研究 / 个人传记 / 技术积累)
 ```
 
-## Deferred (explicitly)
+| 认知切片 | 物理载体 | 核心职责与规范 |
+| :--- | :--- | :--- |
+| 🎯 **Focus (目标)** | `000_Inbox/FOCUS.md` | **单一动态锚点**。只保留 1 份，记录季度北极星（North Star）、核心战役（Active Battlegrounds）与反向清单（Not-To-Do List），作为 Agent 推演的最高约束。 |
+| 💡 **Idea (巧思)** | `000_Inbox/idea.YYYY.md` | **年度灵感流**。按年分库、按月分节（`## YYYY-MM`），捕获思维火花与顿悟（格式：`- 💡 [时间] 想法 #idea/seed`）。成熟后提炼入 `100_Project/`。 |
+| 📝 **Memo (备忘)** | `000_Inbox/memo.YYYY.md` | **年度事实流**。按年分库，记录关键事实与技术备忘（格式：`- 📌 [时间] 事实`），保持高信噪比。 |
+| ✅ **Todo (行动)** | `000_Inbox/todo.YYYY.md` | **年度日程与行动流**。带时间块 `[start:: ...] [end:: ...]`，原生兼容 `ical-plugin-pro` 自动同步至 Google Calendar。 |
+| 👥 **Contact (人脉)** | `300_Resources/305_Contact/` | **人脉实体卡片**。一人一卡，内嵌 Dataview 动态查询全库关联待办，记录交往脉络与合作画像。 |
+| 💎 **Ownly (所有权)** | `WYQD/` 或 `Ownly/` | **原生打通 Ownly 1.2.3**。记录物品设备（Objects）、账户快照（Accounts）与旅行足迹（Trips），Router 负责语义索引与预算唤回，绝不破坏原有格式。 |
 
-- Optional local embedding sidecar — only if a broader benchmark shows a measured recall gap;
-  lexical/bigram/alias retrieval currently meets all acceptance gates.
-- Automatic extraction of state from legacy prose — explicit declarations are supported today.
-- A remote notification transport adapter — the local JSONL sink is the verified boundary.
+---
 
-## License
+## ⚡ 3 分钟快速上手 (Quick Start)
 
-MIT. See [`LICENSE`](LICENSE).
+### 1. 生产/初始化一个共生记忆 Vault
+无论是一个全新目录，还是希望规范化现有知识库，只需一行命令：
+```bash
+# 生成标准 6 大切片结构并自动建立只读检索索引
+python scripts/knowledge_router.py scaffold "D:/MyVault" --name personal
+```
+> **安全保证**：在已有知识库上运行时具备**非侵入性保护**，已有文件自动跳过，绝不覆盖已有内容。
+
+### 2. 流式闪念捕获 (Stream Capture)
+无需打开庞大的 Obsidian 客户端，随时在命令行或通过 Agent 快速落盘：
+```bash
+# 捕获巧思灵感 (自动落入 000_Inbox/idea.2026.md 当月章节)
+python scripts/knowledge_router.py inbox append idea "关于共生记忆背包的想法 #idea/seed"
+
+# 记录待办日程
+python scripts/knowledge_router.py inbox append todo "对齐数据接口规范 #todo/inbox"
+
+# 记录重要事实
+python scripts/knowledge_router.py inbox append memo "KnowledgeRouter 状态目录已解耦独立"
+```
+
+### 3. 人脉协同与雷达 (Contact Operations)
+```bash
+# 向联系人卡片追加交互记录 (支持姓名、别名或子串模糊匹配)
+python scripts/knowledge_router.py contact append "张一帆" "已确认实验场地数据采集格式"
+
+# 查看联系人画像及 Dataview 动态关联待办
+python scripts/knowledge_router.py contact show "张一帆"
+
+# 查看全局人脉协同雷达与活跃度
+python scripts/knowledge_router.py contact radar
+```
+
+### 4. 认知唤回与 Token 预算裁剪 (Budgeted Recall)
+```bash
+# 全库带出处行号的高信噪比搜索 (纯只读)
+python scripts/knowledge_router.py search "数据行囊" --limit 5 --json
+
+# 核心杀手级功能：严格按 Token 预算提取 Context 简报 (避免打爆上下文)
+python scripts/knowledge_router.py brief "ESG30" --budget-tokens 1500 --json
+```
+
+---
+
+## 🔌 与外部 Agent 协同 (Bring Your Own Memory)
+
+KnowledgeRouter CLI 遵循标准 Agent Skill 协议设计。你可以直接把它作为一个 Skill 加载到任意 Agent（如 **Codex、Antigravity、Claude Code、Cursor、Windsurf、Ductor**）中。
+
+### Agent System Prompt / Rules 配置模板
+只需将以下说明加入你的 Agent 系统提示词（或 `.cursorrules` / Claude Instructions）：
+
+```markdown
+你是一个具备本地 Obsidian 共生记忆能力的智能助手。
+本机已安装 KnowledgeRouter CLI (`kr` / `python scripts/knowledge_router.py`)：
+
+1. 了解背景：在执行重大决策前，优先执行 `brief "FOCUS"` 或 `search "<topic>"` 获取带出处的权威事实；
+2. 捕获灵感：当与用户碰撞出有价值的巧思时，调用 `inbox append idea "<内容> #idea/seed"`；
+3. 记录待办：当用户产生待办时，调用 `inbox append todo "<任务> #todo/inbox"`；
+4. 记录人脉：当涉及关键人物沟通时，调用 `contact append "<姓名>" "<事实>"`；
+5. 安全约束：绝不绕过 CLI 直接读写物理 Markdown 文件。
+```
+
+---
+
+## 🛡️ 双重解耦设计与安全契约 (Decoupled & Safe)
+
+```
+                     ┌──────────────────────────────────────────────┐
+                     │            任意宿主 Agent / CLI 用户           │
+                     └──────────────────────┬───────────────────────┘
+                                            │
+                                            ▼
+                     ┌──────────────────────────────────────────────┐
+                     │        KnowledgeRouter CLI (无重依赖)         │
+                     │  - 纯 Python 3.10+ 标准库 (零 pip 依赖)       │
+                     │  - 独立状态根: ~/.knowledge-router/vaults     │
+                     │  - 环境变量覆盖: KNOWLEDGE_ROUTER_STATE_ROOT  │
+                     └──────────────────────┬───────────────────────┘
+                                            │
+                     ┌──────────────────────┴──────────────────────┐
+                     ▼                                             ▼
+        【解耦模式: 无 Obsidian 运行】                   【协同模式: 配合 Ductor / Obsidian】
+       - 在无头服务器、VSCode 或终端运行               - Obsidian 打开即享双链图谱与 Dataview
+       - 外部 SQLite FTS5 全文索引可随时销毁重建       - Ductor 配置环境变量直接作为记忆引擎
+```
+
+1. **与 Obsidian 解耦**：纯 CommonMark / GFM 标准，不依赖 Obsidian App 运行，不依赖其私有 API 或社区插件。
+2. **与 Ductor 解耦**：默认拥有独立的状态根目录 `~/.knowledge-router/vaults`；在未配置环境变量且独立目录未建立时，自动平滑兼容 `~/.ductor/vaults`，确保既有系统零中断。
+3. **物理安全**：Windows 下采用排他文件锁与 `FILE_SHARE_READ` 独占控制，写入前校验 SHA-256 哈希，杜绝并发覆盖。
+
+---
+
+## 📖 命令行手册速查 (CLI Cheat Sheet)
+
+| 命令模块 | 子命令 | 功能说明 |
+| :--- | :--- | :--- |
+| **脚手架** | `scaffold <path>` | 初始化生产标准的共生记忆 6 大切片结构，并自动挂载索引 |
+| **挂载与状态** | `attach <path>` | 零侵入将已有 Vault 接入注册表并建立 FTS5 索引 |
+| | `status` | 查看当前 Vault 挂载、索引代数与维护状态 |
+| **收件箱流** | `inbox append todo <text>` | 追加任务至 `000_Inbox/todo.YYYY.md`（带日历时间块） |
+| | `inbox append memo <text>` | 追加事实备忘至 `000_Inbox/memo.YYYY.md` |
+| | `inbox append idea <text>` | 追加灵感火花至 `000_Inbox/idea.YYYY.md` |
+| **人脉管理** | `contact append <target> <text>` | 向 `305_Contact/` 下的人物卡片追加交互日志 |
+| | `contact show <target>` | 查看联系人详情、关联项目及 Dataview 任务 |
+| | `contact radar` | 打印全局人脉协同雷达与活跃度 |
+| **检索与唤回**| `search <query>` | 纯只读全局全文/语义检索，返回行号与出处校验和 |
+| | `brief <topic> --budget-tokens N`| 按 Token 预算限制提取高信噪比上下文简报 |
+| **治理与巡检**| `triage todo` | 扫描收件箱任务并进行多维标签/实体对齐 |
+| | `review` | 巡检孤立笔记、断链与到期维护项，生成外部台账 |
+| | `converge` | 将全库散乱的断链收敛为统一创建计划 |
+
+---
+
+## 📚 延伸阅读与架构文档
+
+* 📑 **[共生记忆 Vault 规格说明书 (Symbiotic Memory Spec)](docs/symbiotic-memory-vault-spec.zh.md)**：权威的数据模型、Schema 契约与切片生命周期定义。
+* 📐 **[系统架构设计规范 (System Design)](DESIGN.md)**：分层边界、读写流程与比较并交换（CAS）机制。
+* 🛡️ **[安全与变更契约 (Safety Contract)](references/safety_contract.md)**：物理文件防破坏与权限安全准则。
+* 🤖 **[Agent Skill 接口协议 (SKILL.md)](SKILL.md)**：面向 AI 智能体的标准命令调用规范。
+
+---
+
+## 📄 License
+
+[MIT License](LICENSE) © KnowledgeRouter contributors

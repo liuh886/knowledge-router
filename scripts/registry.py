@@ -25,8 +25,27 @@ _NAME_RE = re.compile(r"[^a-zA-Z0-9._-]+")
 
 
 def default_state_root() -> Path:
-    """Return the fixed machine-local production projection root."""
-    return (Path.home() / ".ductor" / "vaults").resolve()
+    """Return the machine-local production projection root.
+
+    Priority:
+    1. KNOWLEDGE_ROUTER_STATE_ROOT environment variable (if set).
+    2. Primary standalone root: ~/.knowledge-router/vaults.
+    3. Legacy fallback: ~/.ductor/vaults (if ~/.knowledge-router/vaults does not exist,
+       but ~/.ductor/vaults has an existing registry.json).
+    """
+    override = os.environ.get("KNOWLEDGE_ROUTER_STATE_ROOT", "").strip()
+    if override:
+        return Path(override).expanduser().resolve()
+
+    primary = (Path.home() / ".knowledge-router" / "vaults").resolve()
+    if primary.exists():
+        return primary
+
+    legacy = (Path.home() / ".ductor" / "vaults").resolve()
+    if (legacy / "registry.json").is_file():
+        return legacy
+
+    return primary
 
 
 def _utc_now() -> str:
@@ -252,21 +271,30 @@ class VaultRegistry:
     def __init__(self, state_root: Path | None = None) -> None:
         if state_root is None:
             candidate = default_state_root()
-            trusted_base = Path.home()
+            try:
+                candidate.relative_to(Path.home().resolve())
+                trusted_base = Path.home().resolve()
+            except ValueError:
+                trusted_base = Path(candidate.anchor).resolve() if candidate.is_absolute() else Path.home().resolve()
         else:
             candidate = state_root.expanduser().resolve()
             temporary_root = Path(tempfile.gettempdir()).resolve()
             if candidate != default_state_root():
                 try:
                     candidate.relative_to(temporary_root)
+                    trusted_base = temporary_root
                 except ValueError:
                     raise ValueError(
                         "Custom state roots are restricted to the operating-system temporary "
-                        "directory; production state is fixed at ~/.ductor/vaults"
+                        "directory; production state is fixed (defaults to ~/.knowledge-router/vaults "
+                        "or configured via KNOWLEDGE_ROUTER_STATE_ROOT)"
                     ) from None
-                trusted_base = temporary_root
             else:
-                trusted_base = Path.home()
+                try:
+                    candidate.relative_to(Path.home().resolve())
+                    trusted_base = Path.home().resolve()
+                except ValueError:
+                    trusted_base = Path(candidate.anchor).resolve() if candidate.is_absolute() else Path.home().resolve()
         for ancestor in (candidate, *candidate.parents):
             if (ancestor / ".obsidian").is_dir():
                 raise ValueError("External state root must not be inside an Obsidian Vault")

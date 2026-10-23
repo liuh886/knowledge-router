@@ -7,7 +7,8 @@ description: Semantic routing and RAG retrieval across local knowledge vaults, d
 # KnowledgeRouter
 
 Use `scripts/knowledge_router.py` as the stable entry point. All registry, taxonomy, index,
-audit, and idempotency data stays outside Vaults under `~/.ductor/vaults` by default.
+audit, and idempotency data stays outside Vaults under `~/.knowledge-router/vaults` by default
+(with seamless legacy fallback to `~/.ductor/vaults`, or overridden via `KNOWLEDGE_ROUTER_STATE_ROOT`).
 
 ## Start
 
@@ -29,9 +30,9 @@ Enable capture only when the user wants it:
 python scripts/knowledge_router.py attach "/path/to/vault" --name personal --write-policy append-create --capture-mode auto
 ```
 
-Production state is fixed at `~/.ductor/vaults`. The compatibility `--state-root` option accepts
-only the operating-system temporary directory tree for isolated tests; it cannot redirect
-production state into an arbitrary location or another Vault.
+Production state defaults to `~/.knowledge-router/vaults` (or legacy `~/.ductor/vaults`,
+or configured via `KNOWLEDGE_ROUTER_STATE_ROOT`). The compatibility `--state-root` option accepts
+only the operating-system temporary directory tree for isolated tests.
 
 ## Operate
 

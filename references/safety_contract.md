@@ -3,7 +3,8 @@
 The Vault is authoritative. Derived indexes and taxonomy caches are disposable projections;
 capture plans, mutation reconciliation state, and maintenance audit events are durable external
 control records. Attaching, syncing, searching, briefing, and diagnosing must not write inside
-the Vault. Production state is fixed at `~/.ductor/vaults`.
+the Vault. Production state defaults to `~/.knowledge-router/vaults` (or legacy `~/.ductor/vaults`,
+configurable via `KNOWLEDGE_ROUTER_STATE_ROOT`).
 
 Git project libraries are also human-owned, read-only sources. Project attachment and sync may
 write only immutable catalogs inside the external state directory associated with an attached

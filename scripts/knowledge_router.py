@@ -77,7 +77,17 @@ from runtime_backup import (
     restore_backup_archive,
 )
 from secure_io import secure_read_bytes
+from scaffold import scaffold_symbiotic_vault
 from taxonomy_scanner import scan_taxonomy
+from triage_engine import (
+    ContactResolver,
+    append_contact_log,
+    append_inbox_stream,
+    format_triage_summary,
+    get_contact_detail,
+    get_contact_radar,
+    triage_todo_file,
+)
 from vault_doctor import (
     diagnose_vault,
     diagnostic_counts,
@@ -210,6 +220,23 @@ def _parser() -> argparse.ArgumentParser:
         "--capture-mode", choices=("explicit", "auto"), default="explicit"
     )
     attach.add_argument("--json", action="store_true")
+
+    scaffold = sub.add_parser(
+        "scaffold",
+        help="Scaffold a Vault with the 6 symbiotic memory slices (Inbox stream, Focus, Contact, WYQD)",
+    )
+    scaffold.add_argument("path", type=Path, help="Target Vault directory path")
+    scaffold.add_argument("--name", help="Custom name for the vault in registry")
+    scaffold.add_argument(
+        "--no-attach", action="store_true", help="Do not attach after scaffolding"
+    )
+    scaffold.add_argument(
+        "--write-policy",
+        choices=("off", "append-create"),
+        default="append-create",
+        help="Default write policy upon attachment (default: append-create)",
+    )
+    scaffold.add_argument("--json", action="store_true")
 
     listing = sub.add_parser("list", help="List attached Vaults")
     listing.add_argument("--json", action="store_true")
@@ -576,6 +603,73 @@ def _parser() -> argparse.ArgumentParser:
     checkpoint.add_argument("--backup-root", type=Path, required=True)
     checkpoint.add_argument("--label")
     checkpoint.add_argument("--json", action="store_true")
+
+    triage = sub.add_parser(
+        "triage", help="Triage inbox notes (entity linking, multi-dimensional tagging)"
+    )
+    triage_sub = triage.add_subparsers(dest="triage_command", required=True)
+    triage_todo = triage_sub.add_parser("todo", help="Triage inbox todo items")
+    triage_todo.add_argument("--vault")
+    triage_todo.add_argument(
+        "--year", type=int, help="Target year for todo file (defaults to current year)"
+    )
+    triage_todo.add_argument(
+        "--commit",
+        action="store_true",
+        help="Commit modifications safely to disk (defaults to dry-run preview)",
+    )
+    triage_todo.add_argument("--json", action="store_true")
+
+    contact = sub.add_parser(
+        "contact", help="Manage and append interaction logs to contact notes"
+    )
+    contact_sub = contact.add_subparsers(dest="contact_command", required=True)
+    contact_append = contact_sub.add_parser(
+        "append", help="Append interaction log to a contact note in 305_Contact/"
+    )
+    contact_append.add_argument(
+        "target", help="Name, alias, or substring of the contact"
+    )
+    contact_append.add_argument("text", help="Interaction log text to append")
+    contact_append.add_argument("--vault")
+    contact_append.add_argument("--json", action="store_true")
+
+    contact_search = contact_sub.add_parser(
+        "search", help="Search contact by name or alias"
+    )
+    contact_search.add_argument("query", help="Contact name or alias query")
+    contact_search.add_argument("--vault")
+    contact_search.add_argument("--json", action="store_true")
+
+    contact_radar = contact_sub.add_parser(
+        "radar", help="View global contact radar and follow-up status"
+    )
+    contact_radar.add_argument("--vault")
+    contact_radar.add_argument("--year", type=int, help="Target year")
+    contact_radar.add_argument("--json", action="store_true")
+
+    contact_show = contact_sub.add_parser(
+        "show", help="View detailed contact card, open tasks, and associated projects"
+    )
+    contact_show.add_argument("query", help="Contact name or alias query")
+    contact_show.add_argument("--vault")
+    contact_show.add_argument("--year", type=int, help="Target year")
+    contact_show.add_argument("--json", action="store_true")
+
+    inbox = sub.add_parser(
+        "inbox", help="Capture stream notes into 000_Inbox/<type>.<year>.md"
+    )
+    inbox_sub = inbox.add_subparsers(dest="inbox_command", required=True)
+    inbox_append = inbox_sub.add_parser(
+        "append", help="Append capture entry to 000_Inbox/<type>.<year>.md"
+    )
+    inbox_append.add_argument(
+        "type", choices=("todo", "memo", "idea"), help="Type of capture"
+    )
+    inbox_append.add_argument("text", help="Content to record")
+    inbox_append.add_argument("--vault")
+    inbox_append.add_argument("--year", type=int, help="Target year")
+    inbox_append.add_argument("--json", action="store_true")
     return parser
 
 
@@ -583,6 +677,23 @@ def main() -> int:
     args = _parser().parse_args()
     registry = VaultRegistry(args.state_root)
     try:
+        if args.command == "scaffold":
+            res = scaffold_symbiotic_vault(
+                args.path,
+                name=args.name,
+                attach=not args.no_attach,
+                write_policy=args.write_policy,
+                state_root=args.state_root,
+            )
+            msg = (
+                f"✓ 成功生产共生记忆架构于: {res['vault_root']}\n"
+                f"  新建目录: {res['created_directories_count']} 个，新建模板文件: {res['created_files_count']} 个"
+            )
+            if res.get("attach"):
+                msg += f"\n  已自动挂载并索引: [{res['attach']['vault_name']}] ({res['attach']['indexed_notes']} 篇笔记)"
+            _emit(res, json_output=args.json, message=msg)
+            return 0
+
         if args.command == "attach":
             config = registry.attach(
                 args.path,
@@ -649,6 +760,151 @@ def main() -> int:
             config = configs[0]
         else:
             config = registry.resolve(getattr(args, "vault", None))
+        if args.command == "triage":
+            if args.triage_command == "todo":
+                lock_path = registry.vault_state_dir(config) / "locks" / "triage.lock"
+                report = triage_todo_file(
+                    config.root_path,
+                    vault_name=config.name,
+                    year=args.year,
+                    commit=args.commit,
+                    lock_path=lock_path,
+                )
+                _emit(
+                    report.to_dict(),
+                    json_output=args.json,
+                    message=format_triage_summary(report),
+                )
+                return 0
+        if args.command == "contact":
+            lock_path = registry.vault_state_dir(config) / "locks" / "contact.lock"
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+            if args.contact_command == "append":
+                res = append_contact_log(
+                    config.root_path,
+                    args.target,
+                    args.text,
+                    vault_name=config.name,
+                    lock_path=lock_path,
+                )
+                _emit(res, json_output=args.json, message=res.get("message"))
+                return 0 if res["status"] == "success" else 1
+            if args.contact_command == "search":
+                resolver = ContactResolver(config.root_path)
+                entity, candidates = resolver.match_contact(args.query)
+                if entity:
+                    res = {
+                        "status": "found",
+                        "canonical": entity.canonical,
+                        "relative_path": entity.relative_path,
+                        "chinese_name": entity.chinese_name,
+                        "english_name": entity.english_name,
+                        "aliases": entity.aliases,
+                    }
+                    _emit(
+                        res,
+                        json_output=args.json,
+                        message=f"👤 找到联系人: [[{entity.canonical}]] ({entity.relative_path})\n别名: {', '.join(entity.aliases) if entity.aliases else '无'}",
+                    )
+                    return 0
+                if candidates:
+                    res = {
+                        "status": "ambiguous",
+                        "query": args.query,
+                        "candidates": candidates,
+                    }
+                    _emit(
+                        res,
+                        json_output=args.json,
+                        message=f"❓ 找到多个候选联系人: {', '.join(candidates)}，请指定更精确的名称",
+                    )
+                    return 1
+                res = {"status": "not_found", "query": args.query}
+                _emit(
+                    res,
+                    json_output=args.json,
+                    message=f"未在 305_Contact/ 中找到匹配联系人: '{args.query}'",
+                )
+                return 1
+            if args.contact_command == "radar":
+                radar = get_contact_radar(config.root_path, year=args.year)
+                lines = [
+                    f"🌐 人脉协同雷达 (共 {radar['total_contacts']} 位联系人，{radar['total_pending_tasks']} 项待办推进中)",
+                    "-" * 65,
+                ]
+                for c in radar["contacts"]:
+                    if c["pending_tasks_count"] > 0 or c["tier"] == "🟢 活跃交流":
+                        tasks_str = (
+                            f"【{c['pending_tasks_count']} 项待办】"
+                            if c["pending_tasks_count"] > 0
+                            else ""
+                        )
+                        comp_str = f"({c['company']})" if c["company"] else ""
+                        lines.append(
+                            f"{c['tier']} | [[{c['canonical']}]] {comp_str} {tasks_str} 最近: {c['last_contact_date']}"
+                        )
+                lines.append("-" * 65)
+                lines.append(
+                    f"📊 状态分布: {', '.join(f'{k}: {v}' for k, v in radar['tier_summary'].items())}"
+                )
+                _emit(radar, json_output=args.json, message="\n".join(lines))
+                return 0
+
+            if args.contact_command == "show":
+                detail = get_contact_detail(config.root_path, args.query, year=args.year)
+                if detail["status"] == "not_found":
+                    candidates = detail.get("candidates", [])
+                    if candidates:
+                        msg = f"❓ 找到多个候选联系人: {', '.join(candidates)}，请指定更精确的名称"
+                    else:
+                        msg = f"未在 305_Contact/ 中找到匹配联系人: '{args.query}'"
+                    _emit(detail, json_output=args.json, message=msg)
+                    return 1
+
+                lines = [
+                    f"👤 联系人画像: [[{detail['canonical']}]]",
+                    f"📁 笔记路径: {detail['relative_path']}",
+                ]
+                if detail["aliases"]:
+                    lines.append(f"🏷️ 别名: {', '.join(detail['aliases'])}")
+                if detail["info"].get("company"):
+                    lines.append(f"🏢 单位/机构: {detail['info']['company']}")
+                if detail["associated_projects"]:
+                    lines.append(f"📂 关联项目: {', '.join(detail['associated_projects'])}")
+
+                lines.append("-" * 50)
+                lines.append(f"📌 当前待办 ({len(detail['pending_tasks'])} 项):")
+                if detail["pending_tasks"]:
+                    for t in detail["pending_tasks"]:
+                        lines.append(f"  {t}")
+                else:
+                    lines.append("  (暂无未完成待办)")
+
+                lines.append("-" * 50)
+                lines.append(f"🪵 最近交互纪要 ({len(detail['recent_logs'])} 条):")
+                if detail["recent_logs"]:
+                    for log in detail["recent_logs"]:
+                        lines.append(f"  {log}")
+                else:
+                    lines.append("  (暂无记录)")
+
+                _emit(detail, json_output=args.json, message="\n".join(lines))
+                return 0
+
+        if args.command == "inbox":
+            if args.inbox_command == "append":
+                lock_path = registry.vault_state_dir(config) / "locks" / "inbox.lock"
+                lock_path.parent.mkdir(parents=True, exist_ok=True)
+                res = append_inbox_stream(
+                    config.root_path,
+                    args.type,
+                    args.text,
+                    vault_name=config.name,
+                    year=args.year,
+                    lock_path=lock_path,
+                )
+                _emit(res, json_output=args.json, message=res.get("message"))
+                return 0
         if args.command == "backup":
             result = create_runtime_backup(
                 registry, config, args.backup_root, label=args.label
