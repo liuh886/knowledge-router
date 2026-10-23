@@ -12,6 +12,7 @@ Welcome to the **KnowledgeRouter** technical documentation and research reposito
   unverified limits. Authoritative for the plan; `TASKS.md` stays the implementation record.
 
 ### 1. Core Architecture & Specification
+* **[Symbiotic Memory Vault Specification (共生记忆 Vault 规格说明书)](symbiotic-memory-vault-spec.zh.md)**: Product goals, 6 cognitive slices (focus, idea, memo, todo, contact, ownly), decoupling and CLI interaction protocols.
 * **[System Design Specification](../DESIGN.md)**: Full architectural blueprint, data flow contracts, and subsystem definitions.
 * **[Evaluation Criteria & Quality Benchmarks](../EVALUATE.md)**: Evaluation fixtures, search latency thresholds, and accuracy metrics.
 * **[Roadmap & Tasks](../TASKS.md)**: Development phases and milestone tracking.
