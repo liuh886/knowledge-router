@@ -37,7 +37,7 @@ from fts_indexer import (
     prune_generations,
     search_index,
 )
-from registry import VaultRegistry
+from registry import VaultRegistry, default_state_root
 from route_engine import execute_capture, resolve_route
 from secure_io import SecureParent
 from taxonomy_scanner import scan_taxonomy
@@ -115,6 +115,20 @@ class TestKnowledgeRouter(unittest.TestCase):
             VaultRegistry(Path.home() / "knowledge-router-arbitrary-state")
         with self.assertRaisesRegex(ValueError, "indexes must stay outside"):
             build_or_sync_index(self.vault, self.vault / "derived.db")
+
+    def test_decoupled_state_root_resolution(self) -> None:
+        custom_target = (self.temp / "custom_state").resolve()
+        with patch.dict(os.environ, {"KNOWLEDGE_ROUTER_STATE_ROOT": str(custom_target)}):
+            self.assertEqual(default_state_root(), custom_target)
+            registry = VaultRegistry()
+            self.assertEqual(registry.state_root, custom_target)
+
+        with patch.dict(os.environ, {}, clear=False):
+            if "KNOWLEDGE_ROUTER_STATE_ROOT" in os.environ:
+                del os.environ["KNOWLEDGE_ROUTER_STATE_ROOT"]
+            root = default_state_root()
+            self.assertEqual(root.name, "vaults")
+            self.assertTrue(root.parent.name in (".knowledge-router", ".ductor"))
 
     def test_multi_vault_registry_requires_selector(self) -> None:
         self._attach(name="first")
