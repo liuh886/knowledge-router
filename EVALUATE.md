@@ -1,5 +1,36 @@
 # KnowledgeRouter: Evaluation & Quality Criteria
 
+## 2026-10-23 — architecture 0.2 convergence
+
+Baseline: `e959dce`, 292 passing tests and 39 ruff findings. Verification is on Windows with
+Python 3.12.12, isolated temporary Vaults and state roots; no production Vault or Ductor activation.
+
+- Final local regression: **320 passed in 80.39 seconds**. Ruff (`scripts tests integrations`)
+  and bytecode compilation passed. Formatting was applied to changed Python files.
+- Regression evidence covers all reported defects: default read-only rejection for inbox/contact/
+  triage, native exclusive handles, policy revocation after waiting, CAS preservation of human
+  edits, prefix/BOM/CRLF retention, duplicate-name/alias refusal and exact-path selection, explicit
+  nonrecursive/repeatable buffer import, preserved original entry/completion, immediate cited recall,
+  and pending-index replay without duplicate source writes. The legacy Python capture helper also
+  delegates to the shared commit/index boundary and is covered by immediate-recall acceptance.
+- New edit capability: schema 3 retains full original bytes; append-create cannot authorize a full
+  edit. Tests cover short writes/refused blind retries, completed-write interruption reconciliation
+  and historical schema 2 checksum/replay compatibility. Full edits are checked in-place operations,
+  not crash-atomic swaps; partial sources require manual reconciliation using retained originals.
+- Budget regressions execute the README brief command and measure the complete formatted JSON,
+  including citations and Markdown. Numbers are character estimates, not tokenizer guarantees.
+- Runtime-backup regression verifies workflow intents, frozen original material and the mutation
+  journal remain in the archive. Source files are never traversed by runtime backup, though frozen
+  edit plans can contain original source content. Published external artifacts need their own file backup.
+- A clean wheel was built without runtime dependencies and installed in a fresh virtual environment;
+  installed version/metadata, `kr` scaffold, capture, immediate search and budgeted brief passed.
+  The final expanded installation smoke also exercises contact prefix preservation, frozen reviewed
+  edits and completed buffer import/replay. Temporary installation environments are removed afterward.
+- Windows Python 3.11/3.12/3.13 CI is configured. Only the local 3.12 run is claimed here; the remote
+  matrix, real-Vault knowledge-update loop and host activation remain unverified operational gates.
+
+Historical results below retain their original dates and scope; they are not current release totals.
+
 ## 1. Quality metrics
 
 | Dimension | Target | Method |

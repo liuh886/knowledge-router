@@ -6,6 +6,11 @@ Welcome to the **KnowledgeRouter** technical documentation and research reposito
 
 ## 📚 Table of Contents
 
+Current architecture (0.2): [DESIGN](../DESIGN.md) and
+[ADR-001: unified memory workflows](decisions/001-unified-memory-workflows.zh.md).
+The September reviews below are historical evidence; their test counts and runtime states are
+not the current release acceptance record. See [EVALUATE](../EVALUATE.md) for new verification.
+
 ### 0. Plan
 * **[Development plan](development-plan.zh.md)**: Where the project stands, the decisions already taken,
   the remaining delivery items with their acceptance conditions, the stated non-goals and the known

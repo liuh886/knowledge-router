@@ -3,6 +3,28 @@
 This is the portable status for the packaged release. It distinguishes proven local behavior
 from host-specific activation gates.
 
+## Current architecture batch — 0.2.0, 2026-10-23
+
+Authority: [DESIGN](DESIGN.md), [ADR-001](docs/decisions/001-unified-memory-workflows.zh.md),
+and the current batch in [the development plan](docs/development-plan.zh.md).
+
+- [x] Generic capture, Context events and memory workflows use one commit/index application service.
+- [x] Memory CLI adaptation split out; profile analysis/identity has no source mutation capability.
+- [x] Read-only policy enforced for all runtime mutation entrypoints, including policy revocation while waiting.
+- [x] Schema 3 exact-document plans, explicit reviewed-edit capability and retained original bytes;
+      schema 2 checksum/replay compatibility preserved.
+- [x] Prefix-preserving streams/contact logs; BOM/newlines retained; only new todo entries classified.
+- [x] Ambiguous aliases/basenames remain candidates; exact paths disambiguate; linked/template contacts excluded.
+- [x] Explicit nonrecursive buffer imports preserve entries, dates, tags and completion; intent retries deduplicate.
+- [x] Applied-but-unindexed outcomes return plan ids and exit 2; retries finish without duplicate writes.
+- [x] Full-output estimated brief budget, Python >=3.11, default-off safe scaffold and retired legacy relocation.
+- [x] Runtime backup retains workflow intents, originals and other durable registries/ledgers.
+- [x] 320 isolated tests passed; ruff and bytecode checks passed. Windows CI matrix configured.
+
+The September sections below retain historical implementation/acceptance records. Their test counts
+are not current release totals. Real-Vault knowledge evolution, Ductor live activation, remote delivery,
+incremental cross-command reads and learning milestones remain separate from this completed batch.
+
 ## Done (verified by the test suite)
 
 - [x] External multi-Vault registry, immutable FTS index and source citations.

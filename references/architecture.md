@@ -1,14 +1,16 @@
 # Windows-local architecture
 
-This document is the authoritative architecture for the local delivery. The published
-repository remains a future portability target and may still describe the earlier prototype.
+This is the module guide for the local delivery. Current architecture and migration decisions
+are authoritative in [`../DESIGN.md`](../DESIGN.md) and
+[`ADR-001`](../docs/decisions/001-unified-memory-workflows.zh.md), updated 2026-10-23.
 
 ## Product boundary
 
 The Vault is the human-owned source of truth. KnowledgeRouter adds an external control plane and
 disposable read projections; it does not impose a folder system or require Obsidian to be running.
-The only permitted Vault mutations are reviewed exclusive creation and checked append through the
-capture broker.
+Runtime Vault mutations go through the capture broker: exclusive create and checked append under
+`append-create`, plus backed-up full-document CAS under the separate `reviewed-edit` policy.
+Scaffold is an explicit, protected provisioning boundary. It defaults to policy `off`.
 
 ## Layers and ownership
 
@@ -16,6 +18,9 @@ capture broker.
 |---|---|---|
 | Interface | `knowledge_router.py`, `bootstrap.py` | Stable CLI, bounded output, compatibility entrypoint |
 | Application | `vault_service.py` | Shared attach/sync/status/search orchestration |
+| Mutation application | `mutation_service.py` | Shared source commit, applied receipt callback and index refresh; pending indexing exits 2 |
+| Optional memory application | `memory_service.py`, `memory_commands.py` | Registered workflow intents, append-only streams/contact logs, explicit buffer import and CLI adaptation |
+| Memory profile | `triage_engine.py`, `text_document.py` | Read-only verified identities, classification and lossless document proposals; no source writes |
 | Context domain | `context_manager.py` | Generic candidate discovery, declared functional scopes, multi-context impact preview; no mutation capability |
 | Context control records | `context_store.py` | External versioned definitions, revision conflicts, source-baseline drift checks; no Vault mutations |
 | Relationship graph | `link_graph.py` | Read-only external wikilink projection, MOC anchors and per-Context neighbourhoods (anchors, related Contexts, hubs, bridges); rebuildable, no Vault mutations |
@@ -112,6 +117,12 @@ complete forensic mode. Maintenance writes only an external started/completed/fa
 5. Fsync, verify prefix/content invariants, mark the ledger committed, then refresh projections.
 
 No interface may bypass the capture broker for Vault writes.
+
+Schema 3 adds a reviewed-edit-only replacement plan with complete original bytes. The verified
+Windows file handle excludes readers and writers during the checked in-place edit; interruption
+is not atomic and partial states require reconciliation from the retained plan. Old schema 2 plans
+keep their checksum shape and action boundary. `workflow.*.json` binds an input intent to one plan
+and is durable backup material. No delete/move/rename primitive is added. See safety_contract.md.
 
 ## Interface policy
 

@@ -36,6 +36,27 @@ only the operating-system temporary directory tree for isolated tests.
 
 ## Operate
 
+- Memory workflows use the same broker and projection completion as generic capture. The default
+  policy is `off` (including scaffold); `append-create` authorizes only prefix-preserving appends
+  and exclusive creates. An explicit `inbox append idea|memo|todo TEXT` or `contact append TARGET TEXT`
+  commits, or accepts `--preview` to freeze a plan only. Use `--idempotency-key` for retriable intents.
+  Runtime parent directories must exist. Appends never reformat earlier sections; repeated trailing
+  month/Log headings are intentional. Only the newly captured task is classified.
+- Historical `triage todo` is preview-first. Applying its full-document plan requires the separate
+  `reviewed-edit` policy. Source hash/length, original bytes and final payload are frozen; later
+  edits refuse commit. Never treat `append-create` as authorization for a rewrite. See
+  [ADR-001](docs/decisions/001-unified-memory-workflows.zh.md) and safety_contract.md for the explicit
+  in-place edit/interruption boundary.
+- Ambiguous contact names/aliases are not write authority. Pass an exact Vault-relative contact
+  `.md` path when names collide. Templates and linked sources are excluded.
+- `applied_pending_index` means content was already committed but the projection failed. Exit code
+  is 2. Retry the returned frozen plan id with `capture --commit --plan-id ID`, or the same workflow
+  intent key; do not create a replacement capture. Context commit similarly resumes its event id.
+- `inbox drain` is the explicit legacy Quick Capture import. It preserves buffer source bytes and
+  task completion, uses durable intent keys and can be retried. Capture/triage never trigger it.
+- `brief TOPIC --budget-tokens N` budgets the complete emitted JSON using the disclosed estimate.
+  Citations, metadata and Markdown count; omitted sources are reported. This is not a tokenizer.
+
 - Scheduler/monitor callers use `contexts tick --vault <name> --json` for one combined
   maintenance and due-follow-up poll. It includes Context ids from applied events as well
   as registered definitions. Incomplete reads/limits return exit 2, never a false clear.
@@ -238,7 +259,8 @@ only the operating-system temporary directory tree for isolated tests.
   `python scripts/knowledge_router.py capture --vault <name> --commit --plan-id <id> --json`
 - The compatibility form `capture "<text>" --commit` freezes and commits within one command;
   use it only for a user-authorized automatic capture.
-- Commit only if the Vault has `append-create` policy and either the user explicitly requested
+- Commit only if the Vault has the operation's required policy (`append-create`, or `reviewed-edit`
+  for full edits) and either the user explicitly requested
   this write or its saved `capture_mode` is `auto` for ordinary captures.
 - Use `--expected-sha256 <hash>` when appending to a file previously read by the agent.
   Reuse `--idempotency-key <stable-key>` across retries.
@@ -292,7 +314,9 @@ the user wants cross-Vault retrieval.
   reloaded changed rules.
 
 - Never create canonical folders merely because a Vault resembles PARA or Johnny Decimal.
-- Never replace, truncate, move, rename, or delete a user note.
+- Never bypass the broker to replace/truncate a user note. A full edit requires a frozen schema 3
+  plan under `reviewed-edit` with complete original-byte recovery material. Never move, rename or
+  delete user notes. Partial/unknown edits require reconciliation, not a blind retry.
 - Capture plans and the SQLite mutation journal are external. A commit records `PREPARED`
   before touching the Vault and reconciles interrupted retries instead of writing twice.
 - On this Windows-local release, append commit obtains an OS handle that denies competing

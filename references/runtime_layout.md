@@ -29,6 +29,8 @@ It contains:
   projections. The registry chooses the active generation; newest filename is not authority.
 - `maintain_audit.jsonl`: maintenance run receipts, not a running scheduler.
 - `plan.<id>.json`, `mutations.sqlite3`: frozen capture payloads and the broker recovery journal.
+- `workflow.<request-key-hash>.json`: durable command-intent binding to one frozen plan;
+  retries reuse its target, timestamp and source basis. Included in runtime backups.
 - `context-event.<id>.plan.json|.applied.json|.completed.json`: one broker plan bound to
   multiple Contexts, its application and index completion.
 - `context_delivery.jsonl`: optional local-sink delivery ledger created only by an explicit
@@ -36,6 +38,12 @@ It contains:
 
 Indexes, caches, locks and staging files are rebuildable and are never treated as
 authoritative backups. Durable definitions, plans, receipts and the mutation journal are.
+
+Schema 3 edit plans also retain complete original bytes (`original_base64`) for reconciliation;
+do not discard them as an index cache. `mutation_service.py` owns commit/index completion for
+generic capture, Context events and the optional memory application. `memory_service.py` owns
+workflow intent binding; `triage_engine.py` has no source mutation capability. The architecture
+decision and recovery limits are recorded in ../docs/decisions/001-unified-memory-workflows.zh.md.
 
 ## Boundary between configuration and loaded behavior
 

@@ -1,204 +1,142 @@
-# KnowledgeRouter CLI (`kr`)
+# KnowledgeRouter (`kr`)
 
-### 🧠 共生记忆 CLI —— 面向 AI Agent 的本地数据行囊与共生外脑
-> **Turn any Obsidian Vault into an Agent-Ready Symbiotic Memory Backpack — without moving a single note.**  
-> *在不改变任何笔记习惯、不重构目录的前提下，把现有 Obsidian 库变成任何 Agent 都能即插即用、安全读写、携带漫游的共生记忆体。*
+面向本地 Markdown / Obsidian Vault 的证据与 Context 维护工具。保留原有目录，
+为 Agent 提供带出处的检索、显式状态、知识页和可恢复的受控记录。
 
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![Python: >=3.10](https://img.shields.io/badge/Python->=3.10-blue.svg)](pyproject.toml)
-[![Tests: 100% Passing](https://img.shields.io/badge/Tests-150%2B%20Passing-brightgreen.svg)](tests/)
-[![Architecture: Local--First](https://img.shields.io/badge/Architecture-Local--First-orange.svg)](docs/symbiotic-memory-vault-spec.zh.md)
-[![Dependencies: Pure Stdlib](https://img.shields.io/badge/Dependencies-Pure%20Stdlib-blueviolet.svg)](scripts/)
+**0.2.0 · Python 3.11+ · 无运行时第三方依赖 · Windows 写入内核。**
+读取不要求 Obsidian 或 Ductor 运行。追加、全文编辑依赖 Windows 排他句柄；其他平台拒绝这些操作。
 
----
+## 架构
 
-## 🌟 核心理念：为什么需要“共生记忆”？ (Why Symbiotic Memory?)
-
-当前以 Muse、Notion AI、Mem 为代表的 Personal AI Agent 正在将用户的**核心认知资产**（人生目标、价值观、情感反思、社交人脉、生活足迹）逐步圈禁在封闭的云端数据库中。你与 AI 交互越深入，迁移成本就越高，平台锁定越深。
-
-**KnowledgeRouter CLI（共生记忆 CLI）** 旨在打破这一困境：
-
-* **数据主权（Data Sovereignty）**：本地纯文本 Markdown 是唯一物理真理源（SSOT）。拒绝任何平台绑架与云端黑盒。
-* **人机等权（Human-Agent Parity）**：你在 Obsidian 中看到的是优美的排版、双链与 Dataview 动态看板；Agent 看到的是标准化的时间流与结构化上下文。双方互为主客体，共同演进同一份外脑。
-* **数据行囊（Bring Your Own Memory）**：模型是流水的算力，记忆是永恒的资产。今天用 Claude，明天用 Cursor，后天换本地开源模型，只需挂载你的背包，任何 AI 都能秒级理解你。
-* **零污染安全防线（Zero-Pollution Safe Capture）**：采用 **SHA-256 乐观锁** 与 **Windows 排他文件并发控制**，杜绝并发覆盖人类笔迹；绝不随意建立碎片文件污染知识库。
-
----
-
-## 🏛️ 双层共生架构与 6 大认知切片 (Architecture & The 6 Slices)
-
-高频的人机交互最忌讳“一事一文件”引发的碎文件膨胀。KnowledgeRouter 采用经过实战检验的 **“时间流式收件箱（Stream Tier）+ 实体档案（Entity Tier）”** 双层共生架构：
-
-```text
-SymbioticVault/
-├── 000_Inbox/                      # 📥 核心缓冲与时间流式收件箱 (Stream Tier)
-│   ├── FOCUS.md                    # 🎯 切片 1: Focus (单一动态锚点，全局核心关注)
-│   ├── idea.2026.md                # 💡 切片 2: Idea (年度巧思灵感流，#idea/seed)
-│   ├── memo.2026.md                # 📝 切片 3: Memo (年度事实备忘流)
-│   └── todo.2026.md                # ✅ 切片 4: Todo (年度行动与日程流，带日历时间块)
-│
-├── 300_Resources/305_Contact/      # 👥 切片 5: Contact (实体人脉卡片库，内嵌动态 Dataview)
-│   └── [[人名]].md                 
-│
-├── WYQD/ (或 Ownly/)               # 💎 切片 6: Ownly (原生对齐 Ownly 资产/物品/足迹数据库)
-│   ├── Objects/                    # 硬件设备、心爱物品清单与维保
-│   ├── Accounts/ & Snapshots/      # 账户资产配置与净值快照 (脱敏规划)
-│   ├── Reviews/                    # 决策复盘与回溯
-│   └── Trips/ & Trip Visits/       # 旅行足迹、行程路线与体验消费
-│
-├── 100_Project/                    # 📁 进行中交付项目 (Focus 战役的承接实体)
-└── 200_Area/                       # 📁 长期关注领域 (学术研究 / 个人传记 / 技术积累)
+```mermaid
+flowchart TD
+    CLI[kr / Agent / Ductor bridge] --> APP[应用服务]
+    APP --> PROFILE[可选记忆工作流：年度流、人物、分诊]
+    APP --> READ[证据与 Context：索引、状态、知识页、复查]
+    APP --> MUT[统一提交与索引刷新]
+    MUT --> BROKER[冻结计划、权限、CAS、恢复日志]
+    BROKER --> VAULT[用户 Markdown]
+    READ --> VAULT
 ```
 
-| 认知切片 | 物理载体 | 核心职责与规范 |
-| :--- | :--- | :--- |
-| 🎯 **Focus (目标)** | `000_Inbox/FOCUS.md` | **单一动态锚点**。只保留 1 份，记录季度北极星（North Star）、核心战役（Active Battlegrounds）与反向清单（Not-To-Do List），作为 Agent 推演的最高约束。 |
-| 💡 **Idea (巧思)** | `000_Inbox/idea.YYYY.md` | **年度灵感流**。按年分库、按月分节（`## YYYY-MM`），捕获思维火花与顿悟（格式：`- 💡 [时间] 想法 #idea/seed`）。成熟后提炼入 `100_Project/`。 |
-| 📝 **Memo (备忘)** | `000_Inbox/memo.YYYY.md` | **年度事实流**。按年分库，记录关键事实与技术备忘（格式：`- 📌 [时间] 事实`），保持高信噪比。 |
-| ✅ **Todo (行动)** | `000_Inbox/todo.YYYY.md` | **年度日程与行动流**。带时间块 `[start:: ...] [end:: ...]`，原生兼容 `ical-plugin-pro` 自动同步至 Google Calendar。 |
-| 👥 **Contact (人脉)** | `300_Resources/305_Contact/` | **人脉实体卡片**。一人一卡，内嵌 Dataview 动态查询全库关联待办，记录交往脉络与合作画像。 |
-| 💎 **Ownly (所有权)** | `WYQD/` 或 `Ownly/` | **原生打通 Ownly 1.2.3**。记录物品设备（Objects）、账户快照（Accounts）与旅行足迹（Trips），Router 负责语义索引与预算唤回，绝不破坏原有格式。 |
+- **来源**：用户 Markdown 是原始内容；Context 定义、冻结计划、回执与变更日志是外部持久控制记录。
+  两者都需要备份；FTS 索引与关系图是可重建投影。
+- **检索**：SQLite FTS5、中文二元词、规则别名扩展；每条证据带路径、行号、SHA-256 和过期标识。
+- **Context**：有用途、范围和生命周期的上下文，支持一个事件关联多处、显式状态、冲突和跟进。
+- **知识维护**：版本化知识页、来源依赖、预算读取、主张展开和复查议程。正文由人或 Agent 编写，工具核验依据。
+- **六切片工作流**：Focus、Idea、Memo、Todo、Contact、Ownly 目录模板，是可选工作流。
+  Ownly 当前通过 Markdown 索引与目录兼容接入；不包含专用财务计算或自动日历同步。
 
----
+设计与迁移依据：[DESIGN.md](DESIGN.md)、[ADR-001](docs/decisions/001-unified-memory-workflows.zh.md)、
+[当前开发计划](docs/development-plan.zh.md)。
 
-## ⚡ 3 分钟快速上手 (Quick Start)
-
-### 0. 安装方式 (Installation)
-
-你可以选择全局 CLI 安装（推荐）或免安装直接运行：
+## 安装与接入
 
 ```bash
-# 方式 A (推荐)：pip 安装，获得全局 `kr` 与 `knowledge-router` 命令
 pip install -e .
-# 或直接从 GitHub 远端安装
-pip install git+https://github.com/liuh886/knowledge-router.git
-
-# 方式 B (免安装)：零依赖，直接用 Python 标准库运行
+kr --help
+# 源码方式也可直接使用，无需安装
 python scripts/knowledge_router.py --help
+
+# 接入已有 Vault；默认只读，不改原文
+kr attach "/path/to/vault" --name personal
+kr search "项目主题" --vault personal --json
+kr brief "项目主题" --vault personal --budget-tokens 1500 --json
 ```
 
-### 1. 生产/初始化一个共生记忆 Vault
-无论是一个全新目录，还是希望规范化现有知识库，只需一行命令：
+`--budget-tokens` 是明确披露的字符估算，不是真实模型分词器。`brief` 预算包含完整 JSON
+（引用、元数据和 Markdown），放不下的来源会省略并计数，无法容纳元数据时明确报错。
+
+## 可选六切片工作流
+
 ```bash
-# 生成标准 6 大切片结构并自动建立只读检索索引
-kr scaffold "D:/MyVault" --name personal
-```
-> **安全保证**：在已有知识库上运行时具备**非侵入性保护**，已有文件自动跳过，绝不覆盖已有内容。
+# 显式初始化模板；已有文件跳过、链接路径拒绝；默认写入策略为 off
+kr scaffold "/path/to/vault" --name personal
 
-### 2. 流式闪念捕获 (Stream Capture)
-无需打开庞大的 Obsidian 客户端，随时在命令行或通过 Agent 快速落盘：
+# 显式启用追加/创建，再进行记录
+kr attach "/path/to/vault" --name personal --write-policy append-create
+kr inbox append idea "一个值得保留的想法" --vault personal
+kr inbox append memo "接口已确认" --vault personal --idempotency-key meeting-001
+kr inbox append todo "讨论模型评估" --vault personal
+kr contact append "联系人姓名或别名" "已确认下一次沟通安排" --vault personal
+kr contact show "联系人姓名" --vault personal
+```
+
+模板目录：`000_Inbox/{FOCUS,idea.YYYY,memo.YYYY,todo.YYYY}.md`、`100_Project/`、
+`200_Area/Biography/`、`300_Resources/305_Contact/`、`WYQD/`、`400_Archives/`。
+运行时命令要求目标父目录已存在；使用 scaffold 显式初始化。
+
+记录严格保留已有文件的字节前缀、BOM 和换行。若目标月份或 Log 已不是末节，在文件末尾
+追加同名章节。只分诊新捕获的待办，不顺带改写历史任务。联系人同名或别名冲突时拒绝写入，
+可传入精确的 Vault 相对路径（包括 `.md`）消歧。
+
+`inbox append` 和 `contact append` 是明确的提交操作；增加 `--preview` 可只生成冻结计划。
+成功返回时索引已刷新；若内容已写入但索引失败，返回 `applied_pending_index`、plan id 和退出码 2。
+重试原计划或同一 `--idempotency-key`，不会重复写入；不同请求不能复用同一键。
+
+## 全文分诊与旧缓冲导入
+
 ```bash
-# 捕获巧思灵感 (自动落入 000_Inbox/idea.2026.md 当月章节)
-kr inbox append idea "关于共生记忆背包的想法 #idea/seed"
+# 先预览历史任务的拟议改动
+kr triage todo --vault personal --json
 
-# 记录待办日程
-kr inbox append todo "对齐数据接口规范 #todo/inbox"
+# 全文编辑采用独立策略；append-create 不授权这种修改
+kr attach "/path/to/vault" --name personal --write-policy reviewed-edit
+# 将预览返回的 plan id 代入；提交时重新核对原文
+kr capture --plan-id PLAN_ID --commit --vault personal --json
 
-# 记录重要事实
-kr inbox append memo "KnowledgeRouter 状态目录已解耦独立"
+# 显式导入旧 Quick_Capture.md，原缓冲保留；重复执行按持久记录去重
+kr inbox drain --vault personal --json
 ```
 
-### 3. 人脉协同与雷达 (Contact Operations)
+全文编辑计划包含完整 before/after，持有排他句柄校验并写入。它不提供跨崩溃的原子可见性：
+部分写入会标记 `NEEDS_RECONCILIATION`，保留计划中的原文供核对恢复，拒绝盲目重试。
+详见[安全契约](references/safety_contract.md)。
+旧 `migrate_daily_logs.py` 仅保留只读分析，自动重写和搬移原始日记的入口已停用。
+
+## Context 与知识页
+
 ```bash
-# 向联系人卡片追加交互记录 (支持姓名、别名或子串模糊匹配)
-kr contact append "张一帆" "已确认实验场地数据采集格式"
-
-# 查看联系人画像及 Dataview 动态关联待办
-kr contact show "张一帆"
-
-# 查看全局人脉协同雷达与活跃度
-kr contact radar
+kr contexts discover --vault personal --json
+kr contexts register --definitions examples/contexts.json --vault personal --json
+kr contexts brief CONTEXT_ID --query "当前有哪些证据？" --vault personal --json
+kr contexts compile CONTEXT_ID --vault personal --json
+kr contexts page publish CONTEXT_ID --content-file draft.md --vault personal
+kr contexts get CONTEXT_ID --budget-tokens 1200 --vault personal --json
+kr contexts review --vault personal --no-record --json
 ```
 
-### 4. 认知唤回与 Token 预算裁剪 (Budgeted Recall)
+Context 定义和草稿格式分别见 [Context 协议](references/context_protocol.md)与
+[知识页协议](references/knowledge_pages.md)。`contexts get` 的预算目前核算主张文本，
+并披露省略数；完整输出预算由通用 `brief` 提供。维护策略、调度和远端通知必须显式接入，
+命令可用不代表生产流程已启用。
+
+## 外部状态与 Agent 接入
+
+状态默认存于 `~/.knowledge-router/vaults`，可用 `KNOWLEDGE_ROUTER_STATE_ROOT` 覆盖；
+主目录未建立且旧 Ductor 注册表存在时兼容 `~/.ductor/vaults`。状态与来源必须位于不同目录。
+
+Agent 按 [SKILL.md](SKILL.md) 调用 CLI。可选 Ductor 桥接位于 `integrations/ductor/knowledge_router.py`；
+它只转发明确参数，不证明宿主已经加载检索钩子或启用了调度。
+
+## 从 0.1 迁移
+
+- 无须搬移笔记或重建 Context。旧 schema 2 冻结计划仍可读取、提交与幂等重放。
+- Python 最低版本调整为 3.11；scaffold 默认保持 `off`。
+- `append-create` 的权限不扩大；历史任务全文修改显式使用 `reviewed-edit`。
+- 内部 Python 写入助手迁入 `memory_service`，调用必须提供 `VaultRegistry` 与 `VaultConfig`。
+  稳定公开接口为 CLI 和包的 `main` / `__version__`；内部模块不作为独立 Python SDK 发布。
+  `triage_engine` 仅承担分析与查询，不再提供未登记 Vault 的直接写入助手。
+- 备份需包含 `workflow.*.json`、冻结计划和变更日志；这些不是可丢弃缓存。
+
+## 开发验证
+
 ```bash
-# 全库带出处行号的高信噪比搜索 (纯只读)
-kr search "数据行囊" --limit 5 --json
-
-# 核心杀手级功能：严格按 Token 预算提取 Context 简报 (避免打爆上下文)
-kr brief "ESG30" --budget-tokens 1500 --json
+python -m pip install -e . pytest ruff
+python -m ruff check scripts tests integrations
+python -m pytest
 ```
 
----
+CI 覆盖 Windows Python 3.11 / 3.12 / 3.13。实测结果及适用范围记录在 [EVALUATE.md](EVALUATE.md)。
 
-## 🔌 与外部 Agent 协同 (Bring Your Own Memory)
-
-KnowledgeRouter CLI 遵循标准 Agent Skill 协议设计。你可以直接把它作为一个 Skill 加载到任意 Agent（如 **Codex、Antigravity、Claude Code、Cursor、Windsurf、Ductor**）中。
-
-### Agent System Prompt / Rules 配置模板
-只需将以下说明加入你的 Agent 系统提示词（或 `.cursorrules` / Claude Instructions）：
-
-```markdown
-你是一个具备本地 Obsidian 共生记忆能力的智能助手。
-本机已安装 KnowledgeRouter CLI (`kr` / `python scripts/knowledge_router.py`)：
-
-1. 了解背景：在执行重大决策前，优先执行 `brief "FOCUS"` 或 `search "<topic>"` 获取带出处的权威事实；
-2. 捕获灵感：当与用户碰撞出有价值的巧思时，调用 `inbox append idea "<内容> #idea/seed"`；
-3. 记录待办：当用户产生待办时，调用 `inbox append todo "<任务> #todo/inbox"`；
-4. 记录人脉：当涉及关键人物沟通时，调用 `contact append "<姓名>" "<事实>"`；
-5. 安全约束：绝不绕过 CLI 直接读写物理 Markdown 文件。
-```
-
----
-
-## 🛡️ 双重解耦设计与安全契约 (Decoupled & Safe)
-
-```
-                     ┌──────────────────────────────────────────────┐
-                     │            任意宿主 Agent / CLI 用户           │
-                     └──────────────────────┬───────────────────────┘
-                                            │
-                                            ▼
-                     ┌──────────────────────────────────────────────┐
-                     │        KnowledgeRouter CLI (无重依赖)         │
-                     │  - 纯 Python 3.10+ 标准库 (零 pip 依赖)       │
-                     │  - 独立状态根: ~/.knowledge-router/vaults     │
-                     │  - 环境变量覆盖: KNOWLEDGE_ROUTER_STATE_ROOT  │
-                     └──────────────────────┬───────────────────────┘
-                                            │
-                     ┌──────────────────────┴──────────────────────┐
-                     ▼                                             ▼
-        【解耦模式: 无 Obsidian 运行】                   【协同模式: 配合 Ductor / Obsidian】
-       - 在无头服务器、VSCode 或终端运行               - Obsidian 打开即享双链图谱与 Dataview
-       - 外部 SQLite FTS5 全文索引可随时销毁重建       - Ductor 配置环境变量直接作为记忆引擎
-```
-
-1. **与 Obsidian 解耦**：纯 CommonMark / GFM 标准，不依赖 Obsidian App 运行，不依赖其私有 API 或社区插件。
-2. **与 Ductor 解耦**：默认拥有独立的状态根目录 `~/.knowledge-router/vaults`；在未配置环境变量且独立目录未建立时，自动平滑兼容 `~/.ductor/vaults`，确保既有系统零中断。
-3. **物理安全**：Windows 下采用排他文件锁与 `FILE_SHARE_READ` 独占控制，写入前校验 SHA-256 哈希，杜绝并发覆盖。
-
----
-
-## 📖 命令行手册速查 (CLI Cheat Sheet)
-
-| 命令模块 | 子命令 | 功能说明 |
-| :--- | :--- | :--- |
-| **脚手架** | `scaffold <path>` | 初始化生产标准的共生记忆 6 大切片结构，并自动挂载索引 |
-| **挂载与状态** | `attach <path>` | 零侵入将已有 Vault 接入注册表并建立 FTS5 索引 |
-| | `status` | 查看当前 Vault 挂载、索引代数与维护状态 |
-| **收件箱流** | `inbox append todo <text>` | 追加任务至 `000_Inbox/todo.YYYY.md`（带日历时间块） |
-| | `inbox append memo <text>` | 追加事实备忘至 `000_Inbox/memo.YYYY.md` |
-| | `inbox append idea <text>` | 追加灵感火花至 `000_Inbox/idea.YYYY.md` |
-| **人脉管理** | `contact append <target> <text>` | 向 `305_Contact/` 下的人物卡片追加交互日志 |
-| | `contact show <target>` | 查看联系人详情、关联项目及 Dataview 任务 |
-| | `contact radar` | 打印全局人脉协同雷达与活跃度 |
-| **检索与唤回**| `search <query>` | 纯只读全局全文/语义检索，返回行号与出处校验和 |
-| | `brief <topic> --budget-tokens N`| 按 Token 预算限制提取高信噪比上下文简报 |
-| **治理与巡检**| `triage todo` | 扫描收件箱任务并进行多维标签/实体对齐 |
-| | `review` | 巡检孤立笔记、断链与到期维护项，生成外部台账 |
-| | `converge` | 将全库散乱的断链收敛为统一创建计划 |
-
----
-
-## 📚 延伸阅读与架构文档
-
-* 📑 **[共生记忆 Vault 规格说明书 (Symbiotic Memory Spec)](docs/symbiotic-memory-vault-spec.zh.md)**：权威的数据模型、Schema 契约与切片生命周期定义。
-* 📐 **[系统架构设计规范 (System Design)](DESIGN.md)**：分层边界、读写流程与比较并交换（CAS）机制。
-* 🛡️ **[安全与变更契约 (Safety Contract)](references/safety_contract.md)**：物理文件防破坏与权限安全准则。
-* 🤖 **[Agent Skill 接口协议 (SKILL.md)](SKILL.md)**：面向 AI 智能体的标准命令调用规范。
-
----
-
-## 📄 License
-
-[MIT License](LICENSE) © KnowledgeRouter contributors
+[MIT License](LICENSE)
