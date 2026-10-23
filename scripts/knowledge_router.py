@@ -13,6 +13,13 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+# Ensure package directory is on sys.path for sibling imports when loaded via console script
+_PKG_DIR = str(Path(__file__).resolve().parent)
+if _PKG_DIR not in sys.path:
+    sys.path.insert(0, _PKG_DIR)
+
+__version__ = "0.1.0"
+
 from capture_broker import commit_capture_plan, create_capture_plan, load_capture_plan
 from context_assembler import assemble_decision_context
 from context_brief import brief_context, format_context_brief

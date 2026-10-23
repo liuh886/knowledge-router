@@ -17,8 +17,15 @@ classifiers = [
   "Operating System :: OS Independent",
 ]
 
+[project.scripts]
+kr = "knowledge_router.knowledge_router:main"
+knowledge-router = "knowledge_router.knowledge_router:main"
+
 [tool.setuptools]
-py-modules = []
+packages = ["knowledge_router"]
+
+[tool.setuptools.package-dir]
+knowledge_router = "scripts"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

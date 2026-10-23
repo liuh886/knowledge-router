@@ -63,11 +63,25 @@ SymbioticVault/
 
 ## ⚡ 3 分钟快速上手 (Quick Start)
 
+### 0. 安装方式 (Installation)
+
+你可以选择全局 CLI 安装（推荐）或免安装直接运行：
+
+```bash
+# 方式 A (推荐)：pip 安装，获得全局 `kr` 与 `knowledge-router` 命令
+pip install -e .
+# 或直接从 GitHub 远端安装
+pip install git+https://github.com/liuh886/knowledge-router.git
+
+# 方式 B (免安装)：零依赖，直接用 Python 标准库运行
+python scripts/knowledge_router.py --help
+```
+
 ### 1. 生产/初始化一个共生记忆 Vault
 无论是一个全新目录，还是希望规范化现有知识库，只需一行命令：
 ```bash
 # 生成标准 6 大切片结构并自动建立只读检索索引
-python scripts/knowledge_router.py scaffold "D:/MyVault" --name personal
+kr scaffold "D:/MyVault" --name personal
 ```
 > **安全保证**：在已有知识库上运行时具备**非侵入性保护**，已有文件自动跳过，绝不覆盖已有内容。
 
@@ -75,34 +89,34 @@ python scripts/knowledge_router.py scaffold "D:/MyVault" --name personal
 无需打开庞大的 Obsidian 客户端，随时在命令行或通过 Agent 快速落盘：
 ```bash
 # 捕获巧思灵感 (自动落入 000_Inbox/idea.2026.md 当月章节)
-python scripts/knowledge_router.py inbox append idea "关于共生记忆背包的想法 #idea/seed"
+kr inbox append idea "关于共生记忆背包的想法 #idea/seed"
 
 # 记录待办日程
-python scripts/knowledge_router.py inbox append todo "对齐数据接口规范 #todo/inbox"
+kr inbox append todo "对齐数据接口规范 #todo/inbox"
 
 # 记录重要事实
-python scripts/knowledge_router.py inbox append memo "KnowledgeRouter 状态目录已解耦独立"
+kr inbox append memo "KnowledgeRouter 状态目录已解耦独立"
 ```
 
 ### 3. 人脉协同与雷达 (Contact Operations)
 ```bash
 # 向联系人卡片追加交互记录 (支持姓名、别名或子串模糊匹配)
-python scripts/knowledge_router.py contact append "张一帆" "已确认实验场地数据采集格式"
+kr contact append "张一帆" "已确认实验场地数据采集格式"
 
 # 查看联系人画像及 Dataview 动态关联待办
-python scripts/knowledge_router.py contact show "张一帆"
+kr contact show "张一帆"
 
 # 查看全局人脉协同雷达与活跃度
-python scripts/knowledge_router.py contact radar
+kr contact radar
 ```
 
 ### 4. 认知唤回与 Token 预算裁剪 (Budgeted Recall)
 ```bash
 # 全库带出处行号的高信噪比搜索 (纯只读)
-python scripts/knowledge_router.py search "数据行囊" --limit 5 --json
+kr search "数据行囊" --limit 5 --json
 
 # 核心杀手级功能：严格按 Token 预算提取 Context 简报 (避免打爆上下文)
-python scripts/knowledge_router.py brief "ESG30" --budget-tokens 1500 --json
+kr brief "ESG30" --budget-tokens 1500 --json
 ```
 
 ---
