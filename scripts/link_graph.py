@@ -19,6 +19,7 @@ from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
 from fts_indexer import ScanReport, scan_notes
 from link_resolver import (
+    RESOLUTION_VERSION,
     STATUS_AMBIGUOUS,
     STATUS_RESOLVED,
     STATUS_UNRESOLVED,
@@ -76,6 +77,7 @@ def build_link_graph(
     manifest = "\n".join(f"{r.path}:{r.checksum}" for r in scan.records).encode()
     return {
         "schema_version": 1,
+        "resolution_version": RESOLUTION_VERSION,
         "source_generation": hashlib.sha256(manifest).hexdigest(),
         "note_count": len(scan.records),
         "edge_count": len(edges),
@@ -117,7 +119,8 @@ def load_link_graph(
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
         return None
-    if not isinstance(data, dict) or data.get("vault_id") != config.id:
+    if (not isinstance(data, dict) or data.get("vault_id") != config.id
+            or data.get("resolution_version") != RESOLUTION_VERSION):
         return None
     return data
 

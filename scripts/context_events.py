@@ -19,7 +19,7 @@ from context_store import load_context_version
 from fts_indexer import scan_notes
 from registry import VaultConfig, VaultRegistry
 from route_engine import RoutingResult
-from secure_io import secure_read_bytes
+from secure_io import secure_read_source_bytes as secure_read_bytes
 
 
 def _hash(value: Any) -> str:

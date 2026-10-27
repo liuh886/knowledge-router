@@ -352,3 +352,35 @@ See [TASKS.md](TASKS.md) for current delivery status, acceptance gates, and the 
 deferred optional embedding sidecar. See [EVALUATE.md](EVALUATE.md) for the quality gates and
 measured results. See [references/runtime_layout.md](references/runtime_layout.md) for state
 locations and the optional Ductor integration boundary.
+
+## Personal profile (2026-10-25)
+
+For idea/memo/todo/Biography/Investment workflows, use `streams list --vault NAME`,
+`streams append TYPE TEXT --vault NAME [--preview] [--idempotency-key KEY]`,
+and read-only `streams check --vault NAME [--limit N] --json`. Types are idea, memo,
+todo, biography, investment. The optional profile uses the existing Inbox/Biography/Investment
+parents; it creates no directories. Biography accepts --tier L1|L2|L3 and area streams
+accept --date YYYY-MM-DD for occurrence dates. All new entries have stable block IDs.
+Legacy `inbox append todo|memo|idea` delegates to the same service. Creation time is
+not a todo scheduled date; preserve explicit times and report unresolved expressions.
+
+Capture is raw input. Never auto-promote achievements to verified or post investment
+transactions. Read the local area schema and Personal_System.md. personal_review joins
+registered maintained Context agendas; checks flag missing evidence/review data, invalid
+financial snapshots and source-date gaps, without certifying truth or reconciling trades.
+Use the existing full regression suite before changing the canonical source. Installed
+local launchers may delegate to a reviewed repository; do not patch stale parallel scripts.
+
+For repeated named-Context reads, prefer the exact registered id (e.g. biography:main)
+after discovering it. Exact ids use live scoped content reads plus linked event sources;
+name/inferred selection keeps full global discovery and ambiguity checks. Read
+source_generation_scope before interpreting the digest: a scoped digest is not a
+Vault/index generation. No content cache or reduced index-verification guarantee is implied.
+
+Index refresh now reports build_mode=full|incremental|reused, delta counts and fallback_reason.
+It still performs two complete source/hash scans. An immutable index byte receipt
+(index.*.verified.json) is reconstructible cache, not a fact or manual approval record.
+Missing receipts require semantic validation; mismatched receipts/corrupt bases rebuild.
+Do not hand-create receipt hashes to bless an unknown cache.
+`sync --full --vault NAME` explicitly rebuilds a compact projection; ordinary capture
+refreshes automatically. First legacy validation may remain slower.

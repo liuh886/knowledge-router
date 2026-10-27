@@ -183,6 +183,8 @@ def _is_allowed_source_entry(relative: str) -> bool:
     if parts[0] not in _SOURCE_ALLOWED_DIRS:
         return False
     suffix = PurePosixPath(parts[-1]).suffix
+    if parts[:2] == ("integrations", "powershell") and suffix == ".ps1":
+        return True
     return suffix in _SOURCE_ALLOWED_SUFFIXES
 
 

@@ -11,7 +11,11 @@ Current architecture (0.2): [DESIGN](../DESIGN.md) and
 The September reviews below are historical evidence; their test counts and runtime states are
 not the current release acceptance record. See [EVALUATE](../EVALUATE.md) for new verification.
 
+Operational incident: [2026-10-24 capture/index hardlinks](incidents/2026-10-24-capture-hardlinks.zh.md).
+
 ### 0. Plan
+* **[Data-layer contract](data-layer-contract.zh.md)**: Current foundation boundary, identity/provenance/time semantics, role-aware governance and the three-family pilot. Supersedes research-page evolution as the core acceptance goal.
+* **[Maintenance audit, 2026-10-25](maintenance-audit-2026-10-25.zh.md)**: Technical debt, conflicting rules, redundant installations, historical files, verified fixes and the remaining acceptance queue. Historical diagnostic counts are dated evidence, not current acceptance targets.
 * **[Development plan](development-plan.zh.md)**: Where the project stands, the decisions already taken,
   the remaining delivery items with their acceptance conditions, the stated non-goals and the known
   unverified limits. Authoritative for the plan; `TASKS.md` stays the implementation record.
@@ -58,3 +62,7 @@ when, including the findings that were later fixed and the limits that remain.
 * **[Context base landscape and roadmap](context-base-landscape-and-roadmap-2026-09-22.zh.md)**:
   Supersedes the strategy note. Reframes the goal as a user-owned, source-grounded, continuously
   revisable context base, and sets the P0-P4 order plus the acceptance story.
+
+* **[Context performance slice](context-performance-2026-10-25.zh.md)**: Measured exact-id scoped reads, evidence parity, and the separate incremental-index consistency gate.
+
+* **[Verified incremental index](incremental-index-2026-10-25.zh.md)**: Source/hash completeness, immutable byte receipts, failure recovery, measured gains and remaining scan cost.

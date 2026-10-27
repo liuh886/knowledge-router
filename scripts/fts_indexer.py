@@ -14,13 +14,15 @@ import re
 import sqlite3
 import stat
 import uuid
-from contextlib import ExitStack
+from contextlib import ExitStack, closing
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
-from secure_io import SecureParent, is_reparse, secure_read_bytes
+from secure_io import SecureParent, is_reparse, secure_read_source_bytes as secure_read_bytes
+from registry import atomic_json_write
 
 _SKIP_DIR_NAMES = frozenset(
     {
@@ -89,6 +91,7 @@ _VALIDATED_INDEXES: dict[str, tuple[int, int, int, int, str, str, str]] = {}
 # Layout version of the external search index. Bump this whenever the table layout
 # changes: it is part of the generation hash, so a bump rebuilds instead of reusing.
 _SCHEMA_VERSION = "5"
+_SCAN_WORKERS = 4
 
 
 @dataclass(frozen=True, slots=True)
@@ -125,8 +128,7 @@ def _is_eligible(path: Path, root: Path, root_resolved: Path | None = None) -> b
     try:
         relative = path.relative_to(root)
         if any(
-            part.startswith(".") or part.casefold() in _SKIP_DIR_NAMES
-            for part in relative.parts
+            part.startswith(".") or part.casefold() in _SKIP_DIR_NAMES for part in relative.parts
         ):
             return False
         resolved = path.resolve(strict=True)
@@ -139,80 +141,101 @@ def _is_eligible(path: Path, root: Path, root_resolved: Path | None = None) -> b
         and not stat.S_ISLNK(information.st_mode)
         and not is_reparse(information)
         and not any(
-            part.startswith(".") or part.casefold() in _SKIP_DIR_NAMES
-            for part in relative.parts
+            part.startswith(".") or part.casefold() in _SKIP_DIR_NAMES for part in relative.parts
         )
     )
 
 
 def _extract_title(content: str, fallback: str) -> str:
-    frontmatter = re.match(
-        r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|\Z)", content, re.DOTALL
-    )
+    frontmatter = re.match(r"\A---\s*\r?\n(.*?)\r?\n---\s*(?:\r?\n|\Z)", content, re.DOTALL)
     if frontmatter:
-        title_match = re.search(
-            r"(?im)^title\s*:\s*[\"']?(.*?)[\"']?\s*$", frontmatter.group(1)
-        )
+        title_match = re.search(r"(?im)^title\s*:\s*[\"']?(.*?)[\"']?\s*$", frontmatter.group(1))
         if title_match and title_match.group(1).strip():
             return title_match.group(1).strip()
     heading = re.search(r"(?m)^#\s+(.+?)\s*$", content)
     return heading.group(1).strip() if heading else fallback
 
 
-def scan_notes(vault_root: Path) -> ScanReport:
-    """Read every eligible UTF-8 Markdown note without mutating the Vault."""
+def _scan_group(vault_root: Path, siblings: list[Path]) -> ScanReport:
+    """One independent directory guard; never share a native handle across workers."""
+    records, skipped_decode, skipped_io = [], [], []
+    siblings = [p for p in siblings if _is_eligible(p, vault_root, vault_root)]
+    if not siblings:
+        return ScanReport((), (), ())
+    with ExitStack() as stack:
+        try:
+            parent = stack.enter_context(
+                SecureParent(vault_root, siblings[0].relative_to(vault_root).as_posix())
+            )
+        except OSError:
+            return ScanReport((), (), tuple(p.relative_to(vault_root).as_posix() for p in siblings))
+        for path in siblings:
+            relative = path.relative_to(vault_root).as_posix()
+            try:
+                raw = parent.read_bytes(name=path.name, allow_hardlinks=True)
+                information = path.stat()
+            except OSError:
+                skipped_io.append(relative)
+                continue
+            try:
+                content = raw.decode("utf-8-sig")
+            except UnicodeDecodeError:
+                skipped_decode.append(relative)
+                continue
+            records.append(NoteRecord(
+                ulid=_stable_id(relative), title=_extract_title(content, path.stem),
+                content=content, path=relative,
+                modified_at=datetime.fromtimestamp(information.st_mtime, tz=UTC).isoformat(),
+                mtime_ns=information.st_mtime_ns, size=information.st_size,
+                checksum=hashlib.sha256(raw).hexdigest(),
+            ))
+    return ScanReport(tuple(records), tuple(skipped_decode), tuple(skipped_io))
+
+
+def scan_notes(vault_root: Path, *, scopes: Iterable[str] | None = None) -> ScanReport:
+    """Read eligible notes, optionally within explicit lexical scopes.
+
+    Paths are still enumerated live, so new/moved/deleted notes need no cache
+    invalidation. Scope filtering happens before source reads and expensive path
+    checks. Every selected source uses the same pinned, verified read as a full scan.
+    """
     vault_root = vault_root.expanduser().resolve()
     if not vault_root.is_dir():
         raise FileNotFoundError(f"Vault directory does not exist: {vault_root}")
     records: list[NoteRecord] = []
     skipped_decode: list[str] = []
     skipped_io: list[str] = []
-    root_resolved = vault_root.resolve()
+    selected = None
+    if scopes is not None:
+        selected = []
+        for scope in scopes:
+            if not isinstance(scope, str) or not scope:
+                raise ValueError("Scan scopes must be nonempty relative paths")
+            parsed = PurePosixPath(scope)
+            if (parsed.is_absolute() or ":" in scope or "\\" in scope
+                    or any(part == ".." or part.startswith(".") for part in parsed.parts)):
+                raise ValueError(f"Unsafe scan scope: {scope}")
+            selected.append(parsed.as_posix())
+
+    def within_scope(path: Path) -> bool:
+        relative_path = path.relative_to(vault_root)
+        if any(part.startswith(".") or part.casefold() in _SKIP_DIR_NAMES
+               for part in relative_path.parts):
+            return False
+        relative = relative_path.as_posix()
+        return selected is None or any(scope == "." or relative == scope or relative.startswith(scope + "/")
+                   for scope in selected)
+
     paths = sorted(
-        (p for p in vault_root.rglob("*.md") if _is_eligible(p, vault_root, root_resolved)),
+        (p for p in vault_root.rglob("*.md") if within_scope(p)),
         key=lambda p: (p.parent, p.name),
     )
-    for _, members in itertools.groupby(paths, key=lambda p: p.parent):
-        siblings = list(members)
-        with ExitStack() as stack:
-            try:
-                parent = stack.enter_context(
-                    SecureParent(
-                        vault_root, siblings[0].relative_to(vault_root).as_posix()
-                    )
-                )
-            except OSError:
-                skipped_io.extend(
-                    p.relative_to(vault_root).as_posix() for p in siblings
-                )
-                continue
-            for path in siblings:
-                relative = path.relative_to(vault_root).as_posix()
-                try:
-                    raw = parent.read_bytes(name=path.name)
-                    information = path.stat()
-                except OSError:
-                    skipped_io.append(relative)
-                    continue
-                try:
-                    content = raw.decode("utf-8-sig")
-                except UnicodeDecodeError:
-                    skipped_decode.append(relative)
-                    continue
-                records.append(
-                    NoteRecord(
-                        ulid=_stable_id(relative),
-                        title=_extract_title(content, path.stem),
-                        content=content,
-                        path=relative,
-                        modified_at=datetime.fromtimestamp(
-                            information.st_mtime, tz=UTC
-                        ).isoformat(),
-                        mtime_ns=information.st_mtime_ns,
-                        size=information.st_size,
-                        checksum=hashlib.sha256(raw).hexdigest(),
-                    )
-                )
+    groups = [list(members) for _, members in itertools.groupby(paths, key=lambda p: p.parent)]
+    with ThreadPoolExecutor(max_workers=min(_SCAN_WORKERS, max(1, len(groups)))) as pool:
+        for result in pool.map(lambda siblings: _scan_group(vault_root, siblings), groups):
+            records.extend(result.records)
+            skipped_decode.extend(result.skipped_decode)
+            skipped_io.extend(result.skipped_io)
     records.sort(key=lambda record: Path(record.path))
     skipped_decode.sort(key=Path)
     skipped_io.sort(key=Path)
@@ -364,9 +387,7 @@ def build_database(
 
 
 def _content_generation(scan: ScanReport) -> str:
-    return _generation_from_pairs(
-        (record.path, record.checksum) for record in scan.records
-    )
+    return _generation_from_pairs((record.path, record.checksum) for record in scan.records)
 
 
 def _require_complete_scan(scan: ScanReport) -> None:
@@ -402,15 +423,23 @@ def _verify_generation(
     *,
     vault_root: Path,
     vault_id: str,
+    verify_projection: bool = False,
 ) -> None:
     uri = f"file:{index_path.resolve().as_posix()}?mode=ro"
-    with sqlite3.connect(uri, uri=True, timeout=5.0) as connection:
+    with closing(sqlite3.connect(uri, uri=True, timeout=5.0)) as connection:
         metadata = _metadata(connection)
         integrity = connection.execute("PRAGMA integrity_check").fetchone()
         notes = int(connection.execute("SELECT COUNT(*) FROM notes").fetchone()[0])
+        fts = int(connection.execute("SELECT COUNT(*) FROM notes_fts").fetchone()[0])
         database_generation = _generation_from_pairs(
             connection.execute("SELECT path, checksum FROM notes ORDER BY path")
         )
+        if verify_projection:
+            receipt = _projection_receipt(index_path, vault_root, vault_id, generation)
+            if receipt is None:
+                _validated_base(connection, vault_root, vault_id, check_fts_integrity=False)
+            elif _index_digest(index_path) != receipt:
+                raise RuntimeError("Index bytes no longer match the validated projection receipt")
     if (
         metadata.get("generation") != generation
         or database_generation != generation
@@ -418,10 +447,199 @@ def _verify_generation(
         or metadata.get("vault_id") != vault_id
         or integrity != ("ok",)
         or notes != expected_notes
+        or fts != notes
     ):
-        raise RuntimeError(
-            f"Existing index generation failed verification: {index_path}"
-        )
+        raise RuntimeError(f"Existing index generation failed verification: {index_path}")
+
+
+_NOTE_COLUMNS = "ulid, title, content, path, modified_at, mtime_ns, size, checksum"
+
+
+def _index_digest(path: Path) -> str:
+    digest = hashlib.sha256()
+    with SecureParent(path.parent, path.name, allow_hidden=True) as parent:
+        descriptor = parent.open_existing(writable=False)
+        try:
+            while chunk := os.read(descriptor, 1024 * 1024):
+                digest.update(chunk)
+        finally:
+            os.close(descriptor)
+    return digest.hexdigest()
+
+
+def _projection_receipt(path: Path, root: Path, identity: str, generation: str) -> str | None:
+    name = path.with_suffix(".verified.json").name
+    try:
+        with SecureParent(path.parent, name) as parent:
+            receipt = json.loads(parent.read_bytes().decode("utf-8"))
+    except FileNotFoundError:
+        return None
+    if (not isinstance(receipt, dict) or receipt.get("schema_version") != 1
+            or receipt.get("index_schema") != _SCHEMA_VERSION
+            or receipt.get("generation") != generation
+            or receipt.get("vault_root") != str(root)
+            or receipt.get("vault_id") != identity
+            or not re.fullmatch(r"[a-f0-9]{64}", str(receipt.get("index_sha256", "")))):
+        raise ValueError("Invalid immutable index verification receipt")
+    return receipt["index_sha256"]
+
+
+def _write_projection_receipt(path: Path, root: Path, identity: str, generation: str) -> None:
+    # Issued only after construction/validation and complete source verification.
+    atomic_json_write(path.with_suffix(".verified.json"), {
+        "schema_version": 1, "index_schema": _SCHEMA_VERSION,
+        "generation": generation, "vault_root": str(root), "vault_id": identity,
+        "index_sha256": _index_digest(path),
+    })
+
+
+def _copy_verified_projection(destination: Path, source: Path, expected: str) -> None:
+    """Hash the bytes actually copied, so even a concurrent donor edit cannot be inherited."""
+    digest = hashlib.sha256()
+    with SecureParent(source.parent, source.name) as parent:
+        descriptor = parent.open_existing(writable=False)
+        try:
+            with destination.open("xb") as target:
+                while chunk := os.read(descriptor, 1024 * 1024):
+                    if target.write(chunk) != len(chunk):
+                        raise OSError("Short immutable index copy")
+                    digest.update(chunk)
+                target.flush()
+                os.fsync(target.fileno())
+        finally:
+            os.close(descriptor)
+    if digest.hexdigest() != expected:
+        raise RuntimeError("Incremental base bytes differ from the verified projection")
+
+
+def _validated_base(
+    connection: sqlite3.Connection, vault_root: Path, vault_id: str, *,
+    check_fts_integrity: bool = True,
+    trusted_bytes: bool = False,
+) -> dict[str, tuple]:
+    """Validate all inherited data, including postings, before trusting a delta base."""
+    metadata = _metadata(connection)
+    rows = list(connection.execute(f"SELECT {_NOTE_COLUMNS} FROM notes"))
+    if (metadata.get("schema_version") != _SCHEMA_VERSION
+            or metadata.get("vault_root") != str(vault_root)
+            or metadata.get("vault_id") != vault_id
+            or metadata.get("generation") != _generation_from_pairs((r[3], r[7]) for r in rows)
+            or (not trusted_bytes and connection.execute("PRAGMA integrity_check").fetchone() != ("ok",))):
+        raise RuntimeError("Invalid incremental base identity, manifest or integrity")
+    by_id = {r[0]: r for r in rows}
+    if len(by_id) != len(rows):
+        raise RuntimeError("Duplicate base note identity")
+    if trusted_bytes:
+        return {row[3]: row for row in rows}
+    for row in rows:
+        if (not all(isinstance(row[i], str) for i in (0, 1, 2, 3, 4, 7))
+                or not all(isinstance(row[i], int) for i in (5, 6)) or row[6] < 0):
+            raise RuntimeError("Invalid incremental base note fields")
+        encoded = row[2].encode("utf-8")
+        valid_payloads = (encoded, b"\xef\xbb\xbf" + encoded)
+        if (row[0] != _stable_id(row[3])
+                or row[1] != _extract_title(row[2], Path(row[3]).stem)
+                or not any(len(raw) == row[6] and hashlib.sha256(raw).hexdigest() == row[7]
+                           for raw in valid_payloads)):
+            raise RuntimeError("Incremental base contains inconsistent note content")
+    # FTS drives the join, so the indexed notes PK is used rather than an N*N FTS scan.
+    mismatch = connection.execute("""
+        SELECT 1 FROM notes_fts f LEFT JOIN notes n ON n.ulid=f.ulid
+        WHERE n.ulid IS NULL OR f.title != n.title OR f.path != n.path OR f.content != n.content
+        LIMIT 1
+    """).fetchone()
+    counts = connection.execute("SELECT COUNT(*), COUNT(DISTINCT ulid) FROM notes_fts").fetchone()
+    if mismatch or counts != (len(rows), len(rows)):
+        raise RuntimeError("Incremental base FTS content mismatch")
+    if check_fts_integrity:
+        connection.execute("INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')")
+    seen = set()
+    grams = connection.execute("SELECT ulid, gram FROM note_bigrams ORDER BY ulid")
+    for identity, group in itertools.groupby(grams, key=lambda row: row[0]):
+        record = by_id.get(identity)
+        if record is None or {row[1] for row in group} != _cjk_bigrams(record[1], record[3], record[2]):
+            raise RuntimeError("Incremental base CJK postings mismatch")
+        seen.add(identity)
+    if any(_cjk_bigrams(row[1], row[3], row[2]) for identity, row in by_id.items() if identity not in seen):
+        raise RuntimeError("Incremental base is missing CJK postings")
+    expected = "SELECT gram, COUNT(*) FROM note_bigrams GROUP BY gram"
+    actual = "SELECT gram, document_count FROM bigram_stats"
+    if (connection.execute(f"SELECT 1 FROM ({expected} EXCEPT {actual}) LIMIT 1").fetchone()
+            or connection.execute(f"SELECT 1 FROM ({actual} EXCEPT {expected}) LIMIT 1").fetchone()):
+        raise RuntimeError("Incremental base CJK statistics mismatch")
+    return {row[3]: row for row in rows}
+
+
+def build_incremental_database(
+    index_path: Path, previous_index: Path, scan: ScanReport, *,
+    generation: str, vault_root: Path, vault_id: str,
+) -> dict[str, int]:
+    """Clone a validated immutable projection and change only affected note/posting rows."""
+    if index_path.exists():
+        raise FileExistsError(index_path)
+    info = previous_index.lstat()
+    if not stat.S_ISREG(info.st_mode) or is_reparse(info) or info.st_nlink != 1:
+        raise ValueError("Incremental base must be an ordinary external index file")
+    uri = f"file:{previous_index.resolve().as_posix()}?mode=ro"
+    # Receipts bind whole immutable files, including FTS/CJK internals, rather
+    # than trusting mtime or re-tokenizing every inherited note on each update.
+    with closing(sqlite3.connect(uri, uri=True)) as source:
+        previous_generation = _metadata(source).get("generation", "")
+    receipt = _projection_receipt(previous_index, vault_root, vault_id, previous_generation)
+    if receipt is not None:
+        _copy_verified_projection(index_path, previous_index, receipt)
+    target = sqlite3.connect(index_path)
+    try:
+        if receipt is None:
+            with closing(sqlite3.connect(uri, uri=True)) as source:
+                source.backup(target)
+        old = _validated_base(target, vault_root, vault_id, trusted_bytes=receipt is not None)
+        current = {record.path: record for record in scan.records}
+        removed = sorted(set(old) - set(current))
+        added, changed, metadata_only, untouched = [], [], [], 0
+        for path, record in current.items():
+            row = old.get(path)
+            values = (record.ulid, record.title, record.content, record.path,
+                      record.modified_at, record.mtime_ns, record.size, record.checksum)
+            if row is None:
+                added.append(values)
+            elif (row[0:4], row[7]) != (values[0:4], values[7]):
+                changed.append(values)
+            elif row != values:
+                metadata_only.append(values)
+            else:
+                untouched += 1
+        if not untouched and not metadata_only:
+            raise RuntimeError("No unchanged notes to inherit; using a compact full build")
+        affected_ids = [old[p][0] for p in removed] + [r[0] for r in changed]
+        with target:
+            target.execute("CREATE TEMP TABLE affected_ids(ulid TEXT PRIMARY KEY)")
+            target.executemany("INSERT INTO affected_ids VALUES(?)", ((i,) for i in affected_ids))
+            target.execute("DELETE FROM notes_fts WHERE ulid IN (SELECT ulid FROM affected_ids)")
+            # Materialize affected CJK statistics before removing postings.
+            target.execute("CREATE TEMP TABLE affected_grams(gram TEXT PRIMARY KEY)")
+            target.execute("INSERT OR IGNORE INTO affected_grams SELECT gram FROM note_bigrams WHERE ulid IN (SELECT ulid FROM affected_ids)")
+            target.execute("DELETE FROM note_bigrams WHERE ulid IN (SELECT ulid FROM affected_ids)")
+            target.execute("DELETE FROM notes WHERE ulid IN (SELECT ulid FROM affected_ids)")
+            updates = added + changed
+            target.executemany(f"INSERT INTO notes({_NOTE_COLUMNS}) VALUES(?,?,?,?,?,?,?,?)", updates)
+            target.executemany("UPDATE notes SET modified_at=?, mtime_ns=?, size=? WHERE ulid=?",
+                               ((r[4], r[5], r[6], r[0]) for r in metadata_only))
+            target.executemany("INSERT INTO notes_fts VALUES(?,?,?,?)",
+                               ((r[0], r[1], r[3], r[2]) for r in updates))
+            new_grams = [(gram, r[0]) for r in updates for gram in _cjk_bigrams(r[1], r[3], r[2])]
+            target.executemany("INSERT INTO note_bigrams VALUES(?,?)", new_grams)
+            target.executemany("INSERT OR IGNORE INTO affected_grams VALUES(?)", ((g,) for g, _ in new_grams))
+            target.execute("DELETE FROM bigram_stats WHERE gram IN (SELECT gram FROM affected_grams)")
+            target.execute("""INSERT INTO bigram_stats SELECT gram, COUNT(*) FROM note_bigrams
+                WHERE gram IN (SELECT gram FROM affected_grams) GROUP BY gram""")
+            target.execute("UPDATE metadata SET value=? WHERE key='generation'", (generation,))
+            target.execute("UPDATE metadata SET value=? WHERE key='created_at'", (datetime.now(UTC).isoformat(),))
+    finally:
+        target.close()
+    _verify_generation(index_path, generation, len(scan.records), vault_root=vault_root, vault_id=vault_id)
+    return {"added": len(added), "updated": len(changed), "removed": len(removed),
+            "metadata_updated": len(metadata_only), "unchanged": untouched}
 
 
 def build_generation_with_scan(
@@ -429,6 +647,8 @@ def build_generation_with_scan(
     state_dir: Path,
     *,
     source_scan: ScanReport | None = None,
+    previous_index: Path | None = None,
+    force_rebuild: bool = False,
 ) -> tuple[dict[str, Any], ScanReport]:
     """Build a generation and return both its manifest and verified source snapshot."""
     scan = source_scan or scan_notes(vault_root)
@@ -440,34 +660,48 @@ def build_generation_with_scan(
     final_path = state_dir / filename
     temporary = state_dir / f".{filename}.{uuid.uuid4().hex}.tmp"
     state_dir.mkdir(parents=True, exist_ok=True)
-    reused = final_path.is_file()
+    reused = final_path.is_file() and not force_rebuild
+    build_mode, delta, fallback = "reused" if reused else "full", None, None
     if reused:
-        _verify_generation(
-            final_path,
-            generation,
-            len(scan.records),
-            vault_root=vault_root,
-            vault_id=vault_id,
-        )
-    else:
         try:
-            build_database(
-                temporary,
-                scan,
-                generation=generation,
-                vault_root=vault_root,
-                vault_id=vault_id,
+            _verify_generation(
+                final_path, generation, len(scan.records), vault_root=vault_root, vault_id=vault_id,
+                verify_projection=True,
             )
-            os.replace(temporary, final_path)
-        finally:
+        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+            reused, build_mode = False, "full"
+            fallback = f"{type(exc).__name__}: {exc}"
+    if not reused:
+        try:
+            if previous_index is not None and not force_rebuild:
+                try:
+                    delta = build_incremental_database(
+                        temporary, previous_index, scan, generation=generation,
+                        vault_root=vault_root, vault_id=vault_id,
+                    )
+                    build_mode = "incremental"
+                except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+                    temporary.unlink(missing_ok=True)
+                    fallback = f"{type(exc).__name__}: {exc}"
+            if build_mode != "incremental":
+                build_database(
+                    temporary, scan, generation=generation,
+                    vault_root=vault_root, vault_id=vault_id,
+                )
+        except BaseException:
             temporary.unlink(missing_ok=True)
-    verification_scan = scan_notes(vault_root)
-    if _content_generation(verification_scan) != generation:
+            raise
+    try:
+        verification_scan = scan_notes(vault_root)
+        _require_complete_scan(verification_scan)
+        if _content_generation(verification_scan) != generation:
+            raise RuntimeError("Vault changed during indexing; no new generation was activated")
         if not reused:
-            final_path.unlink(missing_ok=True)
-        raise RuntimeError(
-            "Vault changed during indexing; no new generation was activated"
-        )
+            os.replace(temporary, final_path)
+        if not reused or _projection_receipt(final_path, vault_root, vault_id, generation) is None:
+            _write_projection_receipt(final_path, vault_root, vault_id, generation)
+    finally:
+        temporary.unlink(missing_ok=True)
     return (
         {
             "generation": generation,
@@ -477,6 +711,9 @@ def build_generation_with_scan(
             "skipped_decode": list(scan.skipped_decode),
             "skipped_io": list(scan.skipped_io),
             "reused": reused,
+            "build_mode": build_mode,
+            "delta": delta,
+            "fallback_reason": fallback,
         },
         verification_scan,
     )
@@ -495,19 +732,13 @@ def build_generation(
     return result
 
 
-def prune_generations(
-    state_dir: Path, *, active_filename: str, keep: int = 2
-) -> list[str]:
+def prune_generations(state_dir: Path, *, active_filename: str, keep: int = 2) -> list[str]:
     """Remove only superseded external projections, retaining rollback capacity."""
     if keep < 1:
         raise ValueError("keep must be at least 1")
     state_dir = state_dir.resolve()
     generations = sorted(
-        (
-            path
-            for path in state_dir.glob("index.*.db")
-            if path.is_file() and not path.is_symlink()
-        ),
+        (path for path in state_dir.glob("index.*.db") if path.is_file() and not path.is_symlink()),
         key=lambda path: path.stat().st_mtime_ns,
     )
     protected = set(generations[-keep:])
@@ -517,6 +748,7 @@ def prune_generations(
         if path in protected:
             continue
         path.unlink()
+        path.with_suffix(".verified.json").unlink(missing_ok=True)
         removed.append(path.name)
     return removed
 
@@ -552,8 +784,7 @@ def build_or_sync_index(vault_root: Path, index_path: Path) -> int:
 
 def _metadata(connection: sqlite3.Connection) -> dict[str, str]:
     return {
-        str(key): str(value)
-        for key, value in connection.execute("SELECT key, value FROM metadata")
+        str(key): str(value) for key, value in connection.execute("SELECT key, value FROM metadata")
     }
 
 
@@ -577,17 +808,11 @@ def _validate_index_binding(
         resolved_root = vault_root.expanduser().resolve()
         expected_id = _vault_identity(resolved_root)
         if metadata.get("vault_root") != str(resolved_root):
-            raise RuntimeError(
-                f"Index is bound to a different Vault root: {index_path}"
-            )
+            raise RuntimeError(f"Index is bound to a different Vault root: {index_path}")
         if metadata.get("vault_id") != expected_id:
-            raise RuntimeError(
-                f"Index Vault identity metadata is invalid: {index_path}"
-            )
+            raise RuntimeError(f"Index Vault identity metadata is invalid: {index_path}")
         if vault_id and vault_id != expected_id:
-            raise RuntimeError(
-                "Caller Vault identity does not match the canonical Vault root"
-            )
+            raise RuntimeError("Caller Vault identity does not match the canonical Vault root")
     if vault_id and metadata.get("vault_id") != vault_id:
         raise RuntimeError(f"Index is bound to a different Vault id: {index_path}")
     resolved_index = index_path.resolve()
@@ -608,9 +833,7 @@ def _validate_index_binding(
         connection.execute("SELECT path, checksum FROM notes ORDER BY path")
     )
     if database_generation != actual_generation:
-        raise RuntimeError(
-            f"Index content does not match its generation metadata: {index_path}"
-        )
+        raise RuntimeError(f"Index content does not match its generation metadata: {index_path}")
     _VALIDATED_INDEXES[cache_key] = signature
     return metadata, actual_generation
 
@@ -766,20 +989,14 @@ def _maximal_terms(terms: list[str]) -> list[str]:
 
 
 def _search_terms(terms: list[str]) -> tuple[list[str], list[str]]:
-    english = _maximal_terms(
-        [item for item in terms if not re.search(r"[\u3400-\u9fff]", item)]
-    )
+    english = _maximal_terms([item for item in terms if not re.search(r"[\u3400-\u9fff]", item)])
     cjk = list(
         dict.fromkeys(
-            item
-            for item in terms
-            if re.search(r"[\u3400-\u9fff]", item) and 2 <= len(item) <= 4
+            item for item in terms if re.search(r"[\u3400-\u9fff]", item) and 2 <= len(item) <= 4
         )
     )
     if not cjk:
-        cjk = _maximal_terms(
-            [item for item in terms if re.search(r"[\u3400-\u9fff]", item)]
-        )
+        cjk = _maximal_terms([item for item in terms if re.search(r"[\u3400-\u9fff]", item)])
     return english, cjk
 
 
@@ -809,7 +1026,7 @@ def _query_rows(
         FROM {table}
         JOIN notes n ON n.ulid = {table}.ulid
         WHERE {table} MATCH ?
-        ORDER BY bm25({table}, 0.0, 6.0, 3.0, 1.0)
+        ORDER BY bm25({table}, 0.0, 6.0, 3.0, 1.0), n.path
         LIMIT ?
         """,
         ((" AND " if match_all else " OR ").join(quoted), limit),
@@ -821,9 +1038,7 @@ def _english_rows(
 ) -> list[sqlite3.Row]:
     if not terms:
         return []
-    strict = _query_rows(
-        connection, table="notes_fts", terms=terms, limit=limit, match_all=True
-    )
+    strict = _query_rows(connection, table="notes_fts", terms=terms, limit=limit, match_all=True)
     if strict or len(terms) <= 2:
         return strict
     required = max(2, math.ceil(len(terms) * 0.6))
@@ -886,27 +1101,21 @@ def _fallback_like_rows(
     usable = [term for term in terms if len(term) >= 2][:6]
     if not usable:
         return []
-    clauses = " OR ".join(
-        "instr(lower(n.title || '\n' || n.content), ?) > 0" for _ in usable
-    )
+    clauses = " OR ".join("instr(lower(n.title || '\n' || n.content), ?) > 0" for _ in usable)
     return connection.execute(
         f"""
         SELECT n.title, n.content, n.path, n.ulid, n.checksum, n.mtime_ns, n.size,
                0.0 AS lexical_score
-        FROM notes n WHERE {clauses} LIMIT ?
+        FROM notes n WHERE {clauses} ORDER BY n.path LIMIT ?
         """,
         (*[item.casefold() for item in usable], limit),
     ).fetchall()
 
 
-def _excerpt_with_lines(
-    content: str, terms: list[str], *, max_chars: int
-) -> tuple[str, int, int]:
+def _excerpt_with_lines(content: str, terms: list[str], *, max_chars: int) -> tuple[str, int, int]:
     folded = content.casefold()
     positions = [
-        position
-        for term in terms
-        if term and (position := folded.find(term.casefold())) >= 0
+        position for term in terms if term and (position := folded.find(term.casefold())) >= 0
     ]
     position = min(positions) if positions else 0
     lines = content.splitlines()
@@ -942,8 +1151,7 @@ def _qualifies(
     cjk_required = max(2, math.ceil(len(cjk) * 0.1)) if cjk else 0
     title_matches = sum(item in title_and_path for item in (*english, *cjk))
     acceptable = (bool(english) and matched_english >= english_required) or (
-        bool(cjk)
-        and (matched_cjk >= cjk_required or (title_matches >= 1 and matched_cjk >= 2))
+        bool(cjk) and (matched_cjk >= cjk_required or (title_matches >= 1 and matched_cjk >= 2))
     )
     total = matched_english + matched_cjk
     coverage = matched_english / max(1, len(english)) + matched_cjk / max(1, len(cjk))
@@ -984,8 +1192,7 @@ def search_index(
         )
         cjk_lookup = (
             cjk
-            if not english
-            or (not native_alpha and any(char.isdigit() for char in query))
+            if not english or (not native_alpha and any(char.isdigit() for char in query))
             else []
         )
         candidates: dict[str, sqlite3.Row] = {}
@@ -997,9 +1204,7 @@ def search_index(
             scores[str(row["ulid"])] = float(row["lexical_score"])
         if cjk_lookup:
             try:
-                bigram_candidates = _bigram_rows(
-                    connection, cjk_lookup, limit=max(50, limit * 10)
-                )
+                bigram_candidates = _bigram_rows(connection, cjk_lookup, limit=max(50, limit * 10))
             except sqlite3.OperationalError:
                 bigram_candidates = _fallback_like_rows(
                     connection, cjk_lookup, limit=candidate_limit
@@ -1015,9 +1220,7 @@ def search_index(
             title = str(row["title"] or "")
             content = str(row["content"] or "")
             path = str(row["path"] or "")
-            searchable = re.sub(
-                r"[_/\\-]+", " ", f"{title}\n{path}\n{content}"
-            ).casefold()
+            searchable = re.sub(r"[_/\\-]+", " ", f"{title}\n{path}\n{content}").casefold()
             acceptable, quality = _qualifies(
                 english,
                 cjk,
@@ -1040,9 +1243,7 @@ def search_index(
             if resolved_root is not None:
                 try:
                     source_bytes = secure_read_bytes(resolved_root, relative_path)
-                    stale = hashlib.sha256(source_bytes).hexdigest() != str(
-                        row["checksum"]
-                    )
+                    stale = hashlib.sha256(source_bytes).hexdigest() != str(row["checksum"])
                 except (OSError, ValueError):
                     stale = True
             results.append(
@@ -1057,10 +1258,7 @@ def search_index(
                     "stale": stale,
                     "excerpt": excerpt,
                     "score": round(
-                        quality[0] * 1000
-                        + quality[1] * 100
-                        + quality[2] * 10
-                        + quality[3],
+                        quality[0] * 1000 + quality[1] * 100 + quality[2] * 10 + quality[3],
                         6,
                     ),
                 }
@@ -1089,9 +1287,7 @@ def main() -> int:
         count = build_or_sync_index(args.vault, args.index)
         print(f"Indexed {count} Markdown notes into {args.index}")
         return 0
-    results = search_index(
-        args.index, args.query, limit=args.limit, vault_root=args.vault_root
-    )
+    results = search_index(args.index, args.query, limit=args.limit, vault_root=args.vault_root)
     if args.json:
         print(json.dumps(results, ensure_ascii=False, indent=2))
     elif not results:

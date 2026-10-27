@@ -6,6 +6,9 @@ records the decisions, rejected alternatives and acceptance criteria. The develo
 
 ## 1. Ownership and product boundary
 
+2026-10-25 boundary decision: prioritize [data-layer contracts and governance](docs/data-layer-contract.zh.md).
+The core exposes identified, locatable source records, explicit metadata/relations, integrity signals and recoverable authorized writes. Research synthesis, semantic conflict resolution and business decisions belong to callers. Contexts are optional saved source selections; knowledge pages and domain workflows remain compatible optional applications, not prerequisites or core acceptance gates. No registered Context or source is changed by this decision.
+
 Original Markdown is human-owned. Durable external control records hold definitions, frozen plans,
 idempotent command intents and mutation/event receipts. Both require backup. Indexes, taxonomy and
 relationship graphs are disposable projections. A generic Context kernel supports existing layouts;
@@ -110,3 +113,23 @@ requirements are not weakened on other platforms.
 
 The real knowledge-update loop, claim-impact analysis, cross-command incremental snapshots and
 learning from work remain explicit future milestones, separate from this architecture convergence.
+
+## 2026-10-25: personal profile convergence
+
+Approved product scope: idea/memo/todo are raw capture streams; Biography is an evidence-reviewed achievement domain; Investment owns accounting. Shared entrypoints do not erase domain rules. Reuse memory_service._execute, capture_broker and mutation_service rather than add another writer/registry/database. streams append/list/check are optional personal-profile adapters; absent directories fail. Records carry block IDs; frozen workflow intents preserve retries and source CAS. No auto-promotion, transaction posting or reminders.
+
+Preserve installed todo_time semantics: creation time is not a Tasks scheduled date; ambiguous dates remain unresolved. Area occurrence dates use --date; year headings follow the occurrence. personal_review consumes the shared scan and joins maintained Context review agendas. Structural checks do not certify evidence or reconcile portfolios.
+
+Local deployment: one repository code source, installed stable CLI launcher via a machine-local source descriptor; the shell imports the repository's thin integration. Keep existing state/policy unchanged. The user-approved one-time Biography maintenance has a recovery archive and does not broaden runtime write policy.
+
+## 2026-10-25: measured Context read optimization
+
+Exact registered Context IDs use their reviewed definition without rediscovering every Context. scan_notes accepts explicit relative scopes; it still enumerates paths live but only validates/reads selected content, with existing pinned-source reads. Linked event sources outside scope remain included. Names/inferred IDs keep global discovery to preserve ambiguity behavior. Each source's tags are parsed once per discovery snapshot.
+
+No content cache, metadata-only freshness shortcut, background watcher or index policy change is introduced. Evidence is re-read and hashed before return. Scoped source_generation is explicitly labelled source_generation_scope=context_scopes_and_linked_events; name/inferred discovery retains vault. This digest is not a full Vault/index generation. Full index activation still requires the two complete scans.
+
+## 2026-10-25: verified incremental index generation
+
+Source membership and bytes remain authoritative: two complete live scans still gate publication. No source note is skipped because mtime/size looks unchanged. A candidate can clone the explicitly registered active SQLite index with SQLite backup; a valid base must match Vault/schema/manifest, source-payload checksums, FTS content/integrity and CJK postings/statistics. Only added/changed/deleted notes and their derived postings are rewritten; metadata-only changes avoid token rebuilds. Missing/incompatible/corrupt bases fall back to the existing full builder with a disclosed reason.
+
+Candidates remain temporary until the second complete scan confirms the source generation. Pointer publication and pruning share the same per-Vault index lock as construction. Failure preserves the prior pointer; a completed but unpublished candidate may be reused on retry. An unchanged-generation cache is checked for semantic projection corruption, not just SQLite page integrity. No schema migration, new database service, file watcher or write-policy change.

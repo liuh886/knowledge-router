@@ -243,6 +243,7 @@ def _parser() -> argparse.ArgumentParser:
     sync = sub.add_parser("sync", help="Build and atomically activate a fresh external index")
     sync.add_argument("--vault")
     sync.add_argument("--json", action="store_true")
+    sync.add_argument("--full", action="store_true", help="Build a compact fresh index instead of inheriting a predecessor")
 
     search = sub.add_parser("search", help="Search with path, lines, checksum, and staleness")
     search.add_argument("query")
@@ -664,7 +665,7 @@ def main() -> int:
             config = configs[0]
         else:
             config = registry.resolve(getattr(args, "vault", None))
-        if args.command in {"triage", "contact", "inbox"}:
+        if args.command in {"triage", "contact", "inbox", "streams"}:
             return run_memory_command(args, registry, config, _emit)
         if args.command == "backup":
             result = create_runtime_backup(registry, config, args.backup_root, label=args.label)
@@ -700,7 +701,7 @@ def main() -> int:
             }
             _emit(result, json_output=args.json)
         elif args.command == "sync":
-            result = sync_vault(registry, config)
+            result = sync_vault(registry, config, force_rebuild=args.full)
             _emit(
                 result,
                 json_output=args.json,
@@ -1287,6 +1288,8 @@ def main() -> int:
                 version["definitions"]["contexts"] if version else [],
                 signals,
                 limit=args.detail_limit,
+                source_scan=source_scan,
+                doctor_report=doctor_report,
             )
             _emit(
                 result,

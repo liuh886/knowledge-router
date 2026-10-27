@@ -228,6 +228,7 @@ def discover_contexts(
     if scan.skipped_decode or scan.skipped_io:
         raise ValueError("Context discovery requires a complete readable source scan")
     records = sorted(scan.records, key=lambda note: note.path)
+    tags_by_path = {note.path: extract_tags(note.content) for note in records}
     folders = sorted(
         {
             parent.as_posix()
@@ -350,7 +351,7 @@ def discover_contexts(
         sources = [
             note
             for note in records
-            if note_in_context(note.path, extract_tags(note.content), item)
+            if note_in_context(note.path, tags_by_path[note.path], item)
         ]
         for scope in item.scopes:
             if not any(_under(note.path, scope) for note in records):
@@ -367,7 +368,7 @@ def discover_contexts(
     covered = {
         n.path
         for n in records
-        if any(note_in_context(n.path, extract_tags(n.content), c) for c in contexts.values())
+        if any(note_in_context(n.path, tags_by_path[n.path], c) for c in contexts.values())
     }
     return {
         "schema_version": 1,

@@ -64,7 +64,7 @@ def inspect_contexts(
 
 
 def _sync_vault(
-    registry: VaultRegistry, config: VaultConfig
+    registry: VaultRegistry, config: VaultConfig, *, force_rebuild: bool = False,
 ) -> tuple[dict[str, Any], ScanReport]:
     state_dir = registry.vault_state_dir(config)
     with registry.guard_vault_state(config) as state_guard:
@@ -73,25 +73,22 @@ def _sync_vault(
             timeout=120,
             pinned_parent=state_guard,
         ):
+            current = registry.resolve(config.id)
+            previous_index = state_dir / current.active_index if current.active_index else None
             source_scan = scan_notes(config.root_path)
             profile = scan_taxonomy(
                 config.root_path, source_records=source_scan.records
             )
             atomic_json_write(state_dir / "taxonomy.json", profile.to_dict())
             result, verified_scan = build_generation_with_scan(
-                config.root_path, state_dir, source_scan=source_scan
+                config.root_path, state_dir, source_scan=source_scan, previous_index=previous_index,
+                force_rebuild=force_rebuild,
             )
-    registry.update_index(
-        config.id,
-        filename=str(result["filename"]),
-        generation=str(result["generation"]),
-    )
-    with registry.guard_vault_state(config) as state_guard:
-        with FileLock(
-            state_dir / ".index.lock",
-            timeout=120,
-            pinned_parent=state_guard,
-        ):
+            # Publish the pointer and prune under the same lock as the build, so
+            # an older concurrent sync cannot activate after a newer generation.
+            registry.update_index(
+                config.id, filename=str(result["filename"]), generation=str(result["generation"]),
+            )
             result["pruned_indexes"] = prune_generations(
                 state_dir, active_filename=str(result["filename"]), keep=2
             )
@@ -108,9 +105,11 @@ def _sync_vault(
     )
 
 
-def sync_vault(registry: VaultRegistry, config: VaultConfig) -> dict[str, Any]:
+def sync_vault(
+    registry: VaultRegistry, config: VaultConfig, *, force_rebuild: bool = False,
+) -> dict[str, Any]:
     """Build and activate one complete external projection without changing the Vault."""
-    result, _verified_scan = _sync_vault(registry, config)
+    result, _verified_scan = _sync_vault(registry, config, force_rebuild=force_rebuild)
     return result
 
 

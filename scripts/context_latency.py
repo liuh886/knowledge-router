@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import subprocess
 import sys
 import time
@@ -49,8 +50,6 @@ def measure(
                 [
                     sys.executable,
                     str(entrypoint),
-                    "--state-root",
-                    str(state_root),
                     "contexts",
                     "brief",
                     selector,
@@ -64,6 +63,7 @@ def measure(
                 text=True,
                 encoding="utf-8",
                 check=False,
+                env={**os.environ, "KNOWLEDGE_ROUTER_STATE_ROOT": str(state_root.resolve())},
             )
             elapsed = (time.perf_counter() - started) * 1000
             if completed.returncode:
@@ -94,6 +94,7 @@ def measure(
         "queries": queries,
         "repetitions": repetitions,
         "samples": len(samples),
+        "latencies_ms": samples,
         "latency_p50_ms": p50,
         "latency_p95_ms": p95,
         "budget_ms": budget_ms,

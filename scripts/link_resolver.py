@@ -36,6 +36,9 @@ from typing import Any, Iterable, Mapping
 
 _WIKILINK = re.compile(r"\[\[([^\]\n]+)\]\]")
 
+# Stored relationship projections must not reuse edges built with older rules.
+RESOLUTION_VERSION = 2
+
 # A target with no separator: the documented "filename if unique" branch.
 LEVEL_BASENAME = "unique_basename"
 LEVEL_ALIAS = "unique_alias"
@@ -131,7 +134,11 @@ def aliases(content: str) -> list[str]:
 
 def normalize_target(value: str) -> str:
     """Strip alias/heading suffixes the way Obsidian treats a link target."""
-    target = value.split("|", 1)[0].split("#", 1)[0].strip().replace("\\", "/")
+    # Markdown tables escape the alias delimiter as \|. Remove that table escape
+    # before splitting; otherwise its backslash becomes a trailing path separator
+    # and prevents a target ending in .md from being normalized correctly.
+    target = value.replace(r"\|", "|").split("|", 1)[0].split("#", 1)[0]
+    target = target.strip().replace("\\", "/")
     target = target.removesuffix(".md").strip("/")
     if not target:
         return ""
