@@ -8,13 +8,16 @@ jobs:
     env:
       # CLI fixtures exchange UTF-8 JSON and use IANA timezone data.
       PYTHONUTF8: '1'
-      # Avoid the runner account's DOS short-path alias in temporary fixtures.
-      TEMP: ${{ runner.temp }}
-      TMP: ${{ runner.temp }}
     strategy:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
+      # Avoid the runner account's DOS short-path alias in temporary fixtures.
+      - name: Configure canonical temporary directory
+        shell: pwsh
+        run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
