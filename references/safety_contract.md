@@ -56,6 +56,12 @@ existing intents. Unsupported legacy rewriting/relocation is refused before exec
 
 ## Read and external artifacts
 
+Registered-source reads use `secure_read_source_bytes` (or an explicitly read-only source handle).
+Ordinary hardlinks are readable because their paths do not redirect outside the mounted root;
+they remain indexed and cited rather than silently skipped. Reparse points, symlinks, traversal and
+non-regular files are still refused. The generic strict reader, control records and all mutation
+planning/application continue to reject hardlinks. `allow_hardlinks` never grants write access.
+
 Read generations activate only after integrity, canonical Vault binding, manifest, row count,
 complete source decoding and a second source scan succeed. Returned evidence discloses staleness.
 Knowledge pages and compiled artifacts live outside the Vault unless staged as ordinary broker plans.
@@ -63,3 +69,13 @@ Knowledge pages and compiled artifacts live outside the Vault unless staged as o
 Git project libraries are read-only: metadata and selected Markdown only, no repository code,
 optional Git locks disabled, linked roots/documents rejected, no Git/hosting mutations. Dirty files
 are evidence only with exact hashes and working-tree-aware revisions.
+
+## Incremental projection inheritance (2026-10-25)
+
+Only a whole-file SHA-256 receipt issued by construction/validation can authorize
+fast byte inheritance of an immutable index. The receipt binds Vault, schema and
+source generation; actual copied bytes must match. Missing receipts require full
+projection validation, and invalid receipts/bases rebuild. No mtime/size-only source
+skipping is permitted. Source completeness and the second full hash scan remain
+activation gates. Candidate/receipt publication precede pointer activation; failure
+leaves the prior pointer and retry semantics intact. Explicit sync --full rebuilds.

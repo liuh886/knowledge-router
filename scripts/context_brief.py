@@ -14,7 +14,8 @@ from fts_indexer import extract_query_terms, scan_notes
 from link_graph import anchor_linked_paths, load_link_graph
 from project_adapter import list_projects, search_projects
 from registry import VaultConfig, VaultRegistry
-from secure_io import secure_read_bytes
+from personal_review import personal_source_state
+from secure_io import secure_read_source_bytes as secure_read_bytes
 
 
 def brief_context(
@@ -31,34 +32,53 @@ def brief_context(
     if project_id is not None and (not project_id.strip() or not query.strip()):
         raise ValueError("Project evidence requires an explicit project id and query")
     version = load_context_version(registry, config)
-    scan = scan_notes(config.root_path)
-    catalog = discover_contexts(
-        scan,
-        vault_id=config.id,
-        definitions=version["definitions"] if version else None,
-    )
-    contexts = catalog["contexts"]
-    exact = [c for c in contexts if c["id"] == selector]
-    matches = exact or [
-        c
-        for c in contexts
-        if selector.casefold()
-        in {c["name"].casefold(), *(a.casefold() for a in c["aliases"])}
-    ]
-    if len(matches) != 1:
-        raise ValueError(
-            "Context is missing or ambiguous; use its exact id from contexts discover"
+    declared = next((row for row in version["definitions"]["contexts"]
+                     if row["id"] == selector), None) if version else None
+    if declared is not None:
+        # An exact registered identity needs neither global inference nor name
+        # matching. Include explicit event links outside its source scopes.
+        context = {**declared, "origin": "declared"}
+        for field in ("scopes", "project_ids", "include", "exclude", "tags"):
+            context[field] = tuple(context.get(field) or ())
+        context["aliases"] = (context["name"], *context.get("aliases", ()))
+        history = context_history(registry, config, context["id"], limit=100)
+        scopes = [*context["scopes"], *(event["path"] for event in history["events"])]
+        scan = scan_notes(config.root_path, scopes=scopes)
+        if scan.skipped_decode or scan.skipped_io:
+            raise ValueError("Context brief requires a complete readable source scan")
+        generation = hashlib.sha256("\n".join(
+            f"{note.path}:{note.checksum}" for note in scan.records
+        ).encode()).hexdigest()
+        generation_scope = "context_scopes_and_linked_events"
+    else:
+        # Names and inferred ids retain global discovery so an inferred/declared
+        # collision cannot be silently resolved to a registered namesake.
+        scan = scan_notes(config.root_path)
+        catalog = discover_contexts(
+            scan, vault_id=config.id, definitions=version["definitions"] if version else None,
         )
-    context = matches[0]
-    history = context_history(registry, config, context["id"], limit=100)
+        contexts = catalog["contexts"]
+        exact = [c for c in contexts if c["id"] == selector]
+        matches = exact or [c for c in contexts if selector.casefold() in {
+            c["name"].casefold(), *(a.casefold() for a in c["aliases"])
+        }]
+        if len(matches) != 1:
+            raise ValueError("Context is missing or ambiguous; use its exact id from contexts discover")
+        context = matches[0]
+        history = context_history(registry, config, context["id"], limit=100)
+        generation = catalog["source_generation"]
+        generation_scope = "vault"
     linked_paths = {event["path"] for event in history["events"]}
     tags_by_path = {n.path: extract_tags(n.content) for n in scan.records}
     notes = [
         n
         for n in scan.records
-        if n.path in linked_paths
-        or note_in_context(n.path, tags_by_path[n.path], context)
+        if n.path in linked_paths or note_in_context(n.path, tags_by_path[n.path], context)
     ]
+    if declared is not None:
+        context["source_count"] = sum(
+            note_in_context(n.path, tags_by_path[n.path], context) for n in scan.records
+        )
     affinity = anchor_linked_paths(load_link_graph(registry, config), context["scopes"])
     terms = extract_query_terms(query) if query.strip() else []
     candidates = []
@@ -96,9 +116,7 @@ def brief_context(
                     note,
                 )
             )
-    candidates.sort(
-        key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4], item[5])
-    )
+    candidates.sort(key=lambda item: (-item[0], -item[1], -item[2], -item[3], item[4], item[5]))
     evidence = []
     unavailable = set()
     verified: dict[str, bool] = {}
@@ -125,6 +143,7 @@ def brief_context(
                 "excerpt_truncated": len(excerpt) > 1600,
                 "category": category,
                 "modified_at": note.modified_at,
+                "source_state": personal_source_state(note.path, note.content),
             }
         )
         if len(evidence) == limit:
@@ -143,7 +162,8 @@ def brief_context(
         "linked_events_truncated": history["truncated"],
         "evidence_gap": not evidence,
         "sources_changed_during_read": sorted(unavailable)[:limit],
-        "source_generation": catalog["source_generation"],
+        "source_generation": generation,
+        "source_generation_scope": generation_scope,
         "brief_kind": "extractive_live_reference",
         "recorded_state": project_state(registry, config, context["id"]),
         "limitations": "Passages are source evidence, not reconciled current state. Modification time is not event time; conflicts and completed tasks require interpretation.",
@@ -155,15 +175,12 @@ def brief_context(
         unknown = sorted(set(selected_project_ids) - known_project_ids)
         if unknown:
             raise ValueError(
-                "Unknown project id; choose an exact id from projects list: "
-                + ", ".join(unknown)
+                "Unknown project id; choose an exact id from projects list: " + ", ".join(unknown)
             )
         records = [
             record
             for selected in selected_project_ids
-            for record in search_projects(
-                registry, config, query, limit=limit, project_id=selected
-            )
+            for record in search_projects(registry, config, query, limit=limit, project_id=selected)
         ]
         origin = "explicit_request" if project_id is not None else "reviewed_binding"
         selection = {
@@ -227,7 +244,5 @@ def format_context_brief(brief: dict[str, Any]) -> str:
                     "",
                 ]
             )
-    lines.append(
-        "以上为来源资料摘录；历史记录不自动代表当前状态，来源过期标记须单独留意。"
-    )
+    lines.append("以上为来源资料摘录；历史记录不自动代表当前状态，来源过期标记须单独留意。")
     return "\n".join(lines)

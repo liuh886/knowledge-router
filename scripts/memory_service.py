@@ -9,7 +9,7 @@ import re
 import uuid
 from collections import Counter
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Callable
 
 from capture_broker import CapturePlan, create_document_plan, load_capture_plan
@@ -18,6 +18,18 @@ from registry import FileLock, VaultConfig, VaultRegistry
 from secure_io import secure_read_bytes
 from text_document import TextDocument, append_section
 from triage_engine import ContactResolver, TagClassifier, format_triage_summary, render_triage
+from todo_time import SHANGHAI, normalize_todo_time
+
+
+# Optional personal profile, not inferred write authority. Missing parent directories
+# remain errors at the broker. These are the only stream destinations in this profile.
+STREAMS = {
+    "todo": ("000_Inbox", "todo", "📋 Todo", "capture"),
+    "memo": ("000_Inbox", "memo", "📝 Memo", "capture"),
+    "idea": ("000_Inbox", "idea", "💡 Idea", "capture"),
+    "biography": ("200_Area/Biography", "biography", "个人经历记录", "biography-chronicle"),
+    "investment": ("200_Area/Investment", "investment", "投资待核实记录", "investment-intake"),
+}
 
 
 def _hash(value: Any) -> str:
@@ -153,16 +165,18 @@ def _stream_proposal(
     entry: str,
     triage: dict[str, Any] | None = None,
 ) -> DocumentProposal:
-    path = f"000_Inbox/{kind}.{year}.md"
+    folder, stem, title, note_type = STREAMS[kind]
+    path = f"{folder}/{stem}.{year}.md"
     document = _source(config, path)
     basis = document.checksum if document else None
     if document is None:
-        title = {"todo": "📋 Todo", "memo": "📝 Memo", "idea": "💡 Idea"}[kind]
         document = TextDocument(
             (
                 f'---\ntitle: "{title} {year}"\nyear: {year}\n'
-                f"type: capture\ntags: [capture/{kind}]\n---\n\n"
+                f"type: {note_type}\ntags: [capture/{kind}]\n---\n\n"
                 f"# {title} {year}\n\n"
+                + ("> 原始输入，尚未核实或记账；不改变持仓、成本或现金。\n\n"
+                   if kind == "investment" else "")
             ).encode()
         )
     return DocumentProposal(
@@ -190,28 +204,64 @@ def append_inbox_stream(
     preview: bool = False,
     idempotency_key: str | None = None,
     completed: bool = False,
+    tier: str | None = None,
+    event_date: str | None = None,
 ) -> dict[str, Any]:
     text = _text(text)
-    if capture_type not in {"todo", "memo", "idea"}:
-        raise ValueError("Capture type must be todo, memo or idea")
+    if any(c in text for c in ("\n", "\r", "\x00")):
+        raise ValueError("Capture one entry per command; newlines and NUL are not allowed")
+    if capture_type not in STREAMS:
+        raise ValueError("Unknown personal capture stream")
+    if tier is not None and (capture_type != "biography" or tier not in {"L1", "L2", "L3"}):
+        raise ValueError("Tier is only supported for biography: L1, L2 or L3")
+    if completed and capture_type != "todo":
+        raise ValueError("Completed is only supported for todo")
+    occurrence = date.fromisoformat(event_date) if event_date else None
+    if occurrence and (capture_type not in {"biography", "investment"} or year is not None):
+        raise ValueError("Use --date only for area streams, without --year")
+    if year is not None and capture_type in {"biography", "investment"}:
+        raise ValueError("Area captures use --date YYYY-MM-DD, not --year")
     if year is not None:
         _year(year)
 
     def prepare() -> DocumentProposal:
-        now = datetime.now()
-        chosen = _year(year)
+        now = datetime.now(SHANGHAI)
+        chosen = occurrence.year if occurrence else _year(year)
+        month = occurrence.month if occurrence else now.month
         stamp = now.strftime("%Y-%m-%d %H:%M")
+        temporal = None
         if capture_type == "todo":
-            entry = f"- [{'x' if completed else ' '}] ⏳ {stamp} {text} #todo/inbox"
+            temporal = normalize_todo_time(text, now)
+            fields = f" [created:: {now.isoformat(timespec='minutes')}]"
+            if temporal["start"] is not None:
+                fields += f" [start:: {temporal['start']}]"
+            if temporal["end"] is not None:
+                fields += f" [end:: {temporal['end']}]"
+            if temporal["status"] == "unresolved":
+                fields += " [calendar:: unresolved]"
+            entry = f"- [{'x' if completed else ' '}] {text}{fields} #todo/inbox"
             resolver = ContactResolver(config.root_path)
             entry, contacts = resolver.link_entities(entry)
             entry, tags = TagClassifier().classify_and_tag(entry)
             triage = {"contacts": contacts, "tags": tags}
-        else:
+        elif capture_type in {"memo", "idea"}:
             icon = "💡" if capture_type == "idea" else "📌"
             entry = f"- {icon} [{stamp}] {text}" + (" #idea/seed" if capture_type == "idea" else "")
             triage = None
-        return _stream_proposal(config, capture_type, chosen, now.month, entry, triage)
+        else:
+            happened = occurrence or now.date()
+            marker = f"Experience ({tier or 'L2'})" if capture_type == "biography" else "Pending investment"
+            entry = f"- 📌 [{happened}] **{marker}**: {text} [created:: {now.isoformat(timespec='minutes')}]"
+            triage = None
+        capture_id = f"kr-{uuid.uuid4().hex[:16]}"
+        entry += f" ^{capture_id}"
+        proposal = _stream_proposal(config, capture_type, chosen, month, entry, triage)
+        proposal.metadata["capture_id"] = capture_id
+        proposal.metadata["temporal_resolution"] = temporal
+        proposal.metadata["verification"] = "unreviewed"
+        if capture_type == "investment":
+            proposal.metadata["ledger_changed"] = False
+        return proposal
 
     return _execute(
         registry,
@@ -222,6 +272,8 @@ def append_inbox_stream(
             "text": text,
             "year": year,
             "completed": completed,
+            "tier": tier,
+            "event_date": event_date,
         },
         prepare,
         preview=preview,

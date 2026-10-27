@@ -9,7 +9,7 @@ from typing import Any
 
 from capture_broker import load_capture_plan
 from registry import VaultConfig, VaultRegistry
-from secure_io import secure_read_bytes
+from secure_io import secure_read_source_bytes as secure_read_bytes
 
 
 def normalize_change(change: dict[str, Any], contexts: list[str]) -> dict[str, Any]:
@@ -23,9 +23,7 @@ def normalize_change(change: dict[str, Any], contexts: list[str]) -> dict[str, A
     ):
         raise ValueError("State change must name a linked Context and a valid field")
     if not isinstance(value, str) or not value.strip() or len(value) > 2000:
-        raise ValueError(
-            "State value must be a nonempty string of at most 2000 characters"
-        )
+        raise ValueError("State value must be a nonempty string of at most 2000 characters")
     if field == "lifecycle" and value not in {"active", "retired"}:
         raise ValueError("Lifecycle must be active or retired")
     if field.startswith("followup_"):
@@ -96,9 +94,9 @@ def project_state(
         if plan.plan_sha256 != event["plan_sha256"]:
             raise ValueError("State event plan mismatch")
         # The declaration must also live in the canonical note payload, not only a DB.
-        if declaration_text(change).replace(
-            "\n", ""
-        ).encode() not in plan.payload.replace(b"\r", b"").replace(b"\n", b""):
+        if declaration_text(change).replace("\n", "").encode() not in plan.payload.replace(
+            b"\r", b""
+        ).replace(b"\n", b""):
             raise ValueError("State declaration is not backed by its canonical payload")
         available = False
         try:
@@ -106,8 +104,7 @@ def project_state(
             end = plan.before_size + len(plan.payload)
             available = (
                 raw[plan.before_size : end] == plan.payload
-                and hashlib.sha256(raw[:end]).hexdigest()
-                == receipt["mutation"]["after_sha256"]
+                and hashlib.sha256(raw[:end]).hexdigest() == receipt["mutation"]["after_sha256"]
             )
             line_start = raw[: plan.before_size].count(b"\n") + 1
         except (OSError, ValueError):

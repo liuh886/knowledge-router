@@ -45,6 +45,45 @@ def test_bare_name_resolves_by_unique_filename():
     assert decision.destination == "Elsewhere/Only.md"
 
 
+def test_escaped_table_alias_resolves_existing_dotted_markdown_path():
+    resolver = _resolver({"100_Project/Builder.PRD.md": ""})
+    refs = extract_links(
+        "000_Inbox/inbox.md", r"| [[100_Project/Builder.PRD.md\|Builder]] |"
+    )
+    decision = resolver.resolve(refs[0])
+    assert decision.status == STATUS_RESOLVED
+    assert decision.destination == "100_Project/Builder.PRD.md"
+    # The fix must not make a genuinely missing path resolve by its basename.
+    missing = extract_links("000_Inbox/inbox.md", r"[[Old/Builder.PRD.md\|Builder]]")
+    assert resolver.resolve(missing[0]).status == STATUS_UNRESOLVED
+
+
+def test_table_alias_preserves_asset_and_heading_targets():
+    resolver = _resolver({"Area/Note.md": ""}, assets=["Assets/image.png"])
+    for text, target in [
+        (r"[[Area/Note.md#Section\|section]]", "Area/Note.md"),
+        (r"![[Assets/image.png\|100]]", "Assets/image.png"),
+        (r"[[Area\Note.md\|note]]", "Area/Note.md"),
+    ]:
+        decision = resolver.resolve(extract_links("Source.md", text)[0])
+        assert decision.destination == target
+
+
+def test_table_escape_diagnostics_and_graph_agree(tmp_path):
+    root = tmp_path / "vault"
+    (root / "Projects").mkdir(parents=True)
+    (root / "Projects/One.PRD.md").write_text("# One", encoding="utf-8")
+    (root / "Index.md").write_text(
+        r"| [[Projects/One.PRD.md\|One]] |", encoding="utf-8"
+    )
+    report = diagnose_vault(root)
+    assert report["broken_link_occurrences"] == 0
+    assert report["links_resolved"] == 1
+    graph = build_link_graph(scan_notes(root), vault_root=root)
+    assert graph["unresolved_links"] == 0
+    assert graph["edges"] == [("Index.md", "Projects/One.PRD.md")]
+
+
 def test_explicit_path_cannot_be_overridden_by_a_unique_bare_name():
     """A path-qualified link must resolve by path, not by an unrelated bare match."""
     resolver = _resolver({"Area/Deep/Note.md": "", "Elsewhere/Note.md": "", "Area/Source.md": ""})

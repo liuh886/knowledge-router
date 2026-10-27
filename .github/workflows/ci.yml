@@ -5,15 +5,24 @@ on: [push, pull_request]
 jobs:
   windows:
     runs-on: windows-latest
+    env:
+      # CLI fixtures exchange UTF-8 JSON and use IANA timezone data.
+      PYTHONUTF8: '1'
     strategy:
       matrix:
         python: ['3.11', '3.12', '3.13']
     steps:
+      # Avoid the runner account's DOS short-path alias in temporary fixtures.
+      - name: Configure canonical temporary directory
+        shell: pwsh
+        run: |
+          "TEMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
+          "TMP=$env:RUNNER_TEMP" >> $env:GITHUB_ENV
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
-      - run: python -m pip install -e . pytest ruff
+      - run: python -m pip install -e . pytest ruff tzdata
       - run: python -m ruff check scripts tests integrations
       - run: python -m pytest
       - run: kr --help

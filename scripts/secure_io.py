@@ -161,6 +161,7 @@ def _windows_open_raw(
     disposition: int,
     directory: bool,
     retry_seconds: float = 0.0,
+    allow_hardlinks: bool = False,
 ) -> Any:
     flags = _FILE_FLAG_OPEN_REPARSE_POINT
     if directory:
@@ -183,7 +184,7 @@ def _windows_open_raw(
             raise ValueError(f"Unexpected filesystem object type: {path}")
         if _windows_final_path(handle) != _normalized_windows_path(str(path.resolve())):
             raise RuntimeError(f"Filesystem object changed while opening: {path}")
-        if not directory and information.number_of_links > 1:
+        if not directory and information.number_of_links > 1 and not allow_hardlinks:
             raise ValueError(f"Hard-linked targets are not allowed: {path}")
         return handle
     except Exception:
@@ -249,11 +250,13 @@ class SecureParent(AbstractContextManager["SecureParent"]):
                 _close_handle(handle)
         self._handles.clear()
 
-    def _validate_descriptor(self, descriptor: int, path: Path) -> None:
+    def _validate_descriptor(
+        self, descriptor: int, path: Path, *, allow_hardlinks: bool = False
+    ) -> None:
         information = os.fstat(descriptor)
         if not stat.S_ISREG(information.st_mode) or is_reparse(information):
             raise ValueError(f"Capture target is not a regular file: {path}")
-        if information.st_nlink > 1:
+        if information.st_nlink > 1 and not allow_hardlinks:
             raise ValueError(f"Hard-linked targets are not allowed: {path}")
 
     def open_existing(
@@ -263,7 +266,10 @@ class SecureParent(AbstractContextManager["SecureParent"]):
         exclusive_writes: bool = True,
         exclusive_readers: bool = False,
         name: str | None = None,
+        allow_hardlinks: bool = False,
     ) -> int:
+        if writable and allow_hardlinks:
+            raise ValueError("Hardlink permission is restricted to read-only source handles")
         target_name = name or self.relative.name
         if PurePosixPath(target_name).name != target_name or target_name in {
             "",
@@ -287,6 +293,7 @@ class SecureParent(AbstractContextManager["SecureParent"]):
                 share=share,
                 disposition=_OPEN_EXISTING,
                 directory=False,
+                allow_hardlinks=allow_hardlinks,
             )
             flags = os.O_RDWR if writable else os.O_RDONLY
             flags |= getattr(os, "O_BINARY", 0)
@@ -304,7 +311,7 @@ class SecureParent(AbstractContextManager["SecureParent"]):
             flags |= getattr(os, "O_NOFOLLOW", 0)
             descriptor = os.open(target_name, flags, dir_fd=self._fds[-1])
         try:
-            self._validate_descriptor(descriptor, target_path)
+            self._validate_descriptor(descriptor, target_path, allow_hardlinks=allow_hardlinks)
         except Exception:
             os.close(descriptor)
             raise
@@ -344,11 +351,11 @@ class SecureParent(AbstractContextManager["SecureParent"]):
             raise
         return descriptor
 
-    def read_bytes(self, *, name: str | None = None) -> bytes:
+    def read_bytes(self, *, name: str | None = None, allow_hardlinks: bool = False) -> bytes:
         """Read one validated sibling while reusing this live parent guard."""
         if not self._handles and not self._fds:
             raise RuntimeError("Reading requires an active directory guard")
-        descriptor = self.open_existing(writable=False, name=name)
+        descriptor = self.open_existing(writable=False, name=name, allow_hardlinks=allow_hardlinks)
         try:
             chunks: list[bytes] = []
             while chunk := os.read(descriptor, 1024 * 1024):
@@ -361,6 +368,16 @@ class SecureParent(AbstractContextManager["SecureParent"]):
 def secure_read_bytes(root: Path, relative_path: str) -> bytes:
     with SecureParent(root, relative_path) as parent:
         return parent.read_bytes()
+
+
+def secure_read_source_bytes(root: Path, relative_path: str) -> bytes:
+    """Read an explicitly registered source; hardlinks do not redirect its rooted path.
+
+    Symlinks/reparse points, traversal and non-regular files remain refused.
+    Control records and mutation planning must use the strict reader above.
+    """
+    with SecureParent(root, relative_path) as parent:
+        return parent.read_bytes(allow_hardlinks=True)
 
 
 def secure_create_bytes(root: Path, relative_path: str, payload: bytes) -> None:

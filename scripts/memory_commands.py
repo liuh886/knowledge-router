@@ -10,7 +10,10 @@ from memory_service import (
     append_inbox_stream,
     drain_quick_capture_buffer,
     triage_todos,
+    STREAMS,
 )
+from personal_review import personal_findings, stream_catalog
+from fts_indexer import scan_notes
 from registry import VaultConfig, VaultRegistry
 from triage_engine import ContactResolver, get_contact_detail, get_contact_radar
 
@@ -76,6 +79,23 @@ def add_memory_commands(sub: argparse._SubParsersAction) -> None:
     inbox_append.add_argument("--json", action="store_true")
     inbox_append.add_argument("--preview", action="store_true")
     inbox_append.add_argument("--idempotency-key")
+    streams = sub.add_parser("streams", help="Personal capture profile and read-only domain checks")
+    stream_sub = streams.add_subparsers(dest="streams_command", required=True)
+    for verb in ("list", "check"):
+        command = stream_sub.add_parser(verb)
+        command.add_argument("--vault")
+        command.add_argument("--json", action="store_true")
+        if verb == "check":
+            command.add_argument("--limit", type=int, default=30)
+    append = stream_sub.add_parser("append", help="Record raw input, never promote or book it")
+    append.add_argument("type", choices=tuple(STREAMS))
+    append.add_argument("text")
+    append.add_argument("--vault")
+    append.add_argument("--json", action="store_true")
+    append.add_argument("--preview", action="store_true")
+    append.add_argument("--idempotency-key")
+    append.add_argument("--tier", choices=("L1", "L2", "L3"))
+    append.add_argument("--date", dest="event_date", help="Occurrence date for area input, YYYY-MM-DD")
     drain = inbox_sub.add_parser(
         "drain", help="Import legacy Quick Capture entries once; preserve buffer"
     )
@@ -87,6 +107,38 @@ def add_memory_commands(sub: argparse._SubParsersAction) -> None:
 def run_memory_command(
     args: argparse.Namespace, registry: VaultRegistry, config: VaultConfig, emit: Callable
 ) -> int:
+    if args.command == "streams":
+        if args.streams_command == "list":
+            result = stream_catalog(config.root_path)
+            emit(result, json_output=args.json, message="\n".join(
+                f"{r['type']}: {r['target_pattern']} ({r['status']})" for r in result["streams"]
+            ))
+            return 0
+        if args.streams_command == "check":
+            if args.limit < 1:
+                raise ValueError("Limit must be positive")
+            scan = scan_notes(config.root_path)
+            findings = personal_findings(scan)
+            incomplete = bool(scan.skipped_io or scan.skipped_decode)
+            result = {
+                "status": "incomplete" if incomplete else "findings" if findings else "clear",
+                "total": len(findings), "items": findings[:args.limit],
+                "items_truncated": len(findings) > args.limit, "vault_writes": 0,
+                "coverage": stream_catalog(config.root_path),
+                "skipped_sources": len(scan.skipped_io) + len(scan.skipped_decode),
+                "meaning": "Structural checks and review candidates only; no evidence verification or accounting reconciliation.",
+            }
+            emit(result, json_output=args.json, message="\n".join(
+                [f"{result['status']}: {len(findings)} findings"] +
+                [f"{r['code']}: {r['path']} — {r['reason']}" for r in result["items"]]
+            ))
+            return 2 if incomplete else 1 if findings else 0
+        result = append_inbox_stream(
+            registry, config, args.type, args.text, preview=args.preview,
+            idempotency_key=args.idempotency_key, tier=args.tier, event_date=args.event_date,
+        )
+        emit(result, json_output=args.json, message=result.get("message"))
+        return 2 if result["status"] == "applied_pending_index" else 0
     if args.command == "triage":
         result = triage_todos(registry, config, year=args.year, commit=args.commit)
         emit(result, json_output=args.json, message=result["message"])

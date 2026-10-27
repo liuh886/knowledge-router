@@ -1,5 +1,36 @@
 # KnowledgeRouter: Evaluation & Quality Criteria
 
+## 2026-10-24 — hardlinked sources after a committed capture
+
+- Reproduced exit 2 at the real post-commit index boundary: strict source reading rejected a
+  hardlinked `AGENTS.md`. The mutation was already COMMITTED; the Telegram binding stayed pending.
+- Added a dedicated read-only source capability. Source reads permit ordinary hardlinks within
+  the rooted path while reparse/symlink/traversal checks remain. Writes, mutation planning and
+  control-record reads still reject hardlinks; requesting hardlink permission on a writable
+  handle is refused.
+- Regression first failed with `applied_pending_index`, matching the reported failure. After
+  repair: **323 tests passed in 104.21 seconds**; ruff and bytecode checks passed. The installed
+  runtime's same three new regressions also passed (0.86 seconds).
+- Real original-plan retry returned exit 0, `success` and `idempotent_replay`; the target file's
+  SHA-256 was identical before/after the retry. All 2183 eligible notes were indexed, with no
+  decode or I/O skips; 1827 sources were hardlinked rather than silently excluded.
+- Only the installed Router files needed for the repair were patched, with a local rollback
+  backup; no full skill replacement or note rewrite. End-to-end callback verification exposed
+  a second failure: the host's 15-second commit timeout expired after 15.45 seconds.
+- Ductor commits now have a 120-second deadline while inspections keep 15 seconds. Its bridge
+  drains both pipes concurrently and retains a bounded stderr tail instead of discarding the cause.
+  The two directly affected host suites passed 35 tests plus strict ruff checks. Extended host
+  regression passed **253 tests in 87.80 seconds** after adapting an older cancellation-test
+  subprocess mock to provide the newly captured stderr pipe (the incomplete mock had caused
+  Windows cleanup/stack-overflow failures). No production behavior was relaxed for that fixture.
+- The full actual callback, using the real original plan and a temporary confirmation binding,
+  completed in 24.83 seconds and marked the temporary binding saved; the target source and real
+  binding were unchanged. After confirming idle state and that only this repair's two files differed
+  from startup, PM2 restarted the existing service. The new process is alive, polling Telegram and
+  reports source_match. The original button can complete the preserved real confirmation binding.
+- Incident:
+  [capture/index hardlinks](docs/incidents/2026-10-24-capture-hardlinks.zh.md).
+
 ## 2026-10-23 — architecture 0.2 convergence
 
 Baseline: `e959dce`, 292 passing tests and 39 ruff findings. Verification is on Windows with
@@ -382,3 +413,96 @@ second published card had been silently trusted, so the agenda went from 2,734 t
 card stale and one unregistered. That is the honest state — it was not two cards passing.
 
 Suite: **274 tests**, ruff clean.
+
+## 2026-10-25 — personal capture and domain integration
+
+- Full Python suite: **404 passed in 96.80s**. After a nullable source-state representation correction, the 20 affected Context/stream tests passed again; all scripts/tests pass ruff and compileall.
+- Gateway adapter: 3 Node tests passed; server syntax checked. No production gateway/service restart or live HTTP capture claimed.
+- Temporary-Vault tests cover source CAS, preview, stable block IDs, cross-year/month, BOM/CRLF, same-intent retries, pending-index recovery, no auto-booking, no implicit directories, todo timing and shared domain-review queue. Production captures: zero.
+- Installed stable CLI now resolves one canonical repository through local_source.json; old sibling scripts are not on its import path. PowerShell dot-sources a thin canonical integration. Explicit state/policy unchanged. No provider restart, remote publication or Git push.
+- Context revision 6 adds idea/memo/todo/biography/investment while retaining 5 previous versions and the other 6 Contexts. Fixed an absent Daily scope to its actual historical archive and removed a stale CCS MOC scope already covered by Research.
+- Five live Context briefs returned evidence with stale=false and no evidence gaps. Biography excerpts disclose pending state; Investment excerpts disclose source verification dates and raw-intake/accounting boundary.
+- Production index sync: 2,370 notes, zero skipped I/O/decoding, 15.12 seconds. Concurrent three-worker Context brief smoke samples: 12.44–14.21 seconds; not a performance SLA.
+- Real structural findings: 10 Biography pending reviews, 23 Investment pending-check records, 23 missing Investment verification dates. These are real unresolved data-review items, not failed implementation tests or automatic truth judgments. All 23 Investment data files match pre-change hashes.
+- Biography dashboard JavaScript evaluated against real card metadata: 10 cards, 0 verified with complete receipts, 10 pending. Obsidian visual rendering was not exercised.
+- Recovery archive and live reports: ~/.codex/backups/personal-contexts-20261025-002500/. Archive hashes verified; activation.json records executable source hashes and boundaries.
+
+Remaining product work: source-level review of achievement evidence, actual broker reconciliation when the user requests it, and incremental/scoped verified source reads to reduce repeated whole-Vault scans. The canonical working tree is active code; a later code edit takes effect on the next invocation and must pass regression before use.
+
+Final live check: index refreshed again after link corrections (2,370 notes, 14.12s). Biography review has **0 broken-reference groups**, 10 pending evidence reviews and 1 source_changed maintenance notice caused by this authorized edit. All 9 previously reported broken-reference groups resolved on a complete comparable basis. No review receipt was fabricated to clear the source-change notice.
+
+## 2026-10-25 — measured scoped Context performance
+
+- Full regression: **418 passed in 100.76s**; ruff over all scripts/tests and compileall pass. Fourteen added cases exercise scoped I/O, live source membership, parity, source mutation, encoding failures, ambiguity, illegal paths and bounded tag parsing.
+- Real-library profile before change: 18.98s instrumented, including discovery 12.07s and scan 6.80s; 342,044 tag parses for 2,370 source notes. Profiling overhead means this is not compared directly with process wall latency.
+- Verified original implementation vs current implementation, sequential process-inclusive samples, Biography/iCal, three each: median **10,511.050 -> 979.634 ms**, sample p95/max **11,834.487 -> 994.538 ms**. Median reduction 90.68%, speedup 10.73x. Three samples do not establish a production p95 SLA.
+- Five independent Context/query comparisons: exact evidence arrays, source_count and recorded_state all unchanged. New path 840.459–923.639 ms; original 10,583.604–11,257.189 ms.
+- The first comparison wrapper accidentally loaded current modules due to Windows path normalization; its figures were discarded. Final baseline asserts the saved module paths for fts_indexer/context_manager/context_brief and asserts the baseline lacks the new scope-disclosure field.
+- `source_generation_scope` explicitly distinguishes scoped digests from Vault generations. Exact registered ids read selected scope content plus event links; name/inferred selection preserves discovery and ambiguity semantics. Every returned source is still hash-rechecked. Live path enumeration is retained; no source-content cache or background watcher was added.
+- Fixed the repeatable latency tool to select its explicitly requested production state via the supported environment setting, rather than sending a test-only --state-root override to the CLI. It now retains individual latency samples.
+- Zero production Vault writes and no policy/context-registration/service changes this round. The existing stable CLI loads canonical code on the next invocation. Recovery, original modules, identity-checked benchmark runner, raw comparison JSON and source hashes: ~/.codex/backups/router-performance-20261025-105442/.
+
+Index refresh remains a separate cost: full activation still uses two verified scans. A later incremental design must prove detection of external edits, moves, additions/deletions and recovery before skipping those scans. Scope reads solve the measured high-frequency Context bottleneck without weakening that invariant.
+
+## 2026-10-25 — verified incremental index activation
+
+- Full regression: **440 passed in 98.31s**. All scripts/tests pass ruff and compileall; targeted diff whitespace checks pass. Twenty-two new cases cover external changes (including unchanged mtime/size), CJK/FTS consistency, six donor-corruption classes, receipt failures/copy races, activation failures, concurrent sync, full rebuild, no-inheritance strategy and deterministic tied candidates.
+- Baseline measured separately: live source scans 8.627/7.635s and fresh build 10.802s. Subsequent warmed samples vary; these are not combined into a guaranteed latency estimate.
+- First delta attempt did not improve build cost (5.812 vs full 5.775s) and was not accepted as a performance result. Whole-file immutable receipts removed repeated inherited-token validation while preserving complete source hashing and actual copied-byte verification. Final isolated same-snapshot build sample: full **5.664s**, delta **2.096s**, ~63% lower; all four logical tables equal, predecessor bytes unchanged, 1 updated / 2,369 inherited notes. Later duplicate integrity work was removed without changing the normal data path; no broader speed claim is based on that unmeasured micro-change.
+- Complete process comparison over byte-identical temporary Vault copies, alternating order: before 14.547/27.179s, after 13.012/17.421s. Two samples per mode show variability, not a p95/SLA. Both pairs have the same source generation and identical results for five representative queries.
+- Bounded scan samples: one directory task 6.416/5.245s vs four tasks 4.793/4.723s. Results/errors match serial coverage; handles are not shared across tasks.
+- Publication moved after the second complete source scan. Build, active pointer and pruning are serialized under one index lock. SQLite handles close explicitly; tests exposed/fixed Windows handle retention that blocked candidate replacement. Index.*.verified.json receipts are reconstructible projection caches, excluded by the existing cache backup rule and pruned with their database.
+- Production stable CLI sync succeeded with 2,370 notes, no skipped decode/I/O, build_mode=incremental, 3 changed / 2,367 unchanged, no fallback. Active generation b365337e9999a134c4fb657de7551a6eab698ff974f5e34b2857739ac41304ec. The actual database matches its byte receipt. Post-activation operating-guide and NVDA searches returned stale=false evidence.
+- write_policy remains append-create and capture_mode explicit; no transaction/persona verification changes, production test captures or service restart. Updated only the authorized Personal_System operating guide in the Vault, with its prior bytes archived.
+- Recovery source copies, baseline/failed experiment/final comparison reports, reproducible temporary-Vault runners, previous registry and final code hashes: ~/.codex/backups/incremental-index-20261025-111011/. Detailed contract and measurements: docs/incremental-index-2026-10-25.zh.md.
+
+Whole-source reads remain required twice per refresh. Reducing them needs a separately proven external-change journal and gap/recovery behavior; no mtime-only skip or background watcher is implied by incremental database updates.
+
+## 2026-10-25 — read-only completion diagnosis
+
+No feature/config/source-Vault changes or refreshes. Audit sampled 2,370 notes with one changed Biography annual source; project catalog last synced 2026-09-21. Eleven Contexts, five maintenance policies, no applied Context events; ordinary maintenance runs exist but no successful combined-cycle baseline. Two v2 knowledge pages are stale/scope-changed. Full review --no-record reports 2,844 items, mostly structural diagnostics. Ductor is configured enabled and has a live process; retained exact retrieval logs contain five historical zero-hit invocations, insufficient evidence of successful nonempty conversational injection. Two live exact-id briefs returned fresh evidence in 0.829/0.853s. Current three core source hashes match the 440-test activation record; ruff scripts/tests/integrations passes. No new full regression was run.
+
+Assessment: usable local Beta foundation; knowledge evolution/learning and production-grade release/operational evidence remain incomplete. Detailed assessment and priorities: docs/completion-diagnosis-2026-10-25.zh.md.
+
+## 2026-10-25 — maintenance audit and checkpoint completeness
+
+- Baseline full regression: **440 passed in 115.85s**, Ruff passed. Existing uncommitted changes were preserved.
+- Reproduced a real source-checkpoint gap with an isolated fixture: the canonical PowerShell .ps1 adapter was omitted, leaving only MANIFEST.json. Added allowlisting confined to integrations/powershell/*.ps1; secrets.env and a root .ps1 remain excluded. The test verifies archive inclusion and byte-identical isolated restore. Final full regression: **441 passed in 107.55s**; Ruff scripts/tests/integrations passed.
+- Clarified current-plan precedence over dated historical counts/decisions and the installed README's launcher/historical-code boundary. No historical scripts were removed or patched.
+- Complete pre-change Vault diagnosis: 2,370 Markdown notes, 869 assets, zero skipped I/O/decoding; 6,283 broken occurrences over 2,325 targets, 20 ambiguous occurrences over 7 targets, 1,539 orphans. Source-byte duplicate analysis found 132 groups and 289 extra copies. These are review signals, not authorized deletion candidates.
+- Read-only review: 2,844 items, basis.complete=true, incomplete=false; display limited to 10. Source content is live, so old audit counts are not current acceptance targets.
+- Ran maintain --with-tick: validated=true, status=attention, run e7f08f9e854546b2a82cdc72437caff8; complete-cycle success baseline now exists. This does not imply any fact was reviewed or all KR-N3 criteria passed.
+- Refreshed project catalog: 29 projects, 224 documents, 14 dirty worktrees. Three cap notices cover kept 20 of 26/23/50 candidates, hence 39 candidate documents omitted. This is bounded catalog coverage, not a complete repository scan.
+- Reproduced a separate unresolved defect: quality_analyzer.context_quality_queue labels an explicitly excluded path as a Context member because it uses scopes only, ignoring include/exclude/tags. No corresponding defect is asserted for contexts review. This remains backlog, not a completed repair.
+- Eight existing Vault document amendments were prepared with original bytes, exact diff and hashes; not applied because saved append-create does not authorize replacement. No write-policy escalation, bulk reorganization, deletion, service restart or remote publication.
+
+Technical dispositions and next steps: [maintenance audit](docs/maintenance-audit-2026-10-25.zh.md). Local evidence/recovery is in the timestamped private audit backup; local paths are retained in the Vault maintenance record rather than this portable report.
+
+## 2026-10-25 — data-foundation contract and first governance batch
+
+- User confirmed prioritizing source-data governance over research synthesis. Added `docs/data-layer-contract.zh.md`; updated current plan, task queue and design/readme entrypoints. Earlier KR-N1–N5 plans remain labelled history. Registered Contexts, existing knowledge pages and domain schemas were not retired or migrated; CCS page evolution is no longer a core acceptance gate.
+- Added a standalone read-only `scripts/data_inventory.py`, reusing safe source scanning without Context or registry access. Two live scans agreed on 2,066 Markdown paths/hashes, no skipped I/O/decoding. The tool reports its rule version, complete manifest, bounded candidates, omissions and source-set verification; matching scans are not claimed to be an atomic snapshot. Top-level simple scalar parsing is explicitly not YAML validation.
+- Inventory: 151 same-identifier candidate groups; 855 structured-record candidates, 71 template candidates, 4 raw-capture candidates, 5 navigation candidates, 1,131 prose/unknown. These are role/identity hints, not defects or deletion decisions. Domain ID candidates are separated by schema/type; legal backup/snapshot identities remain preserved. Two notes contain inline Base64 image payloads. Zero repeated top-level keys/unparsed identity fields in this limited parser, not a certification of metadata validity.
+- Three-family live pilot inspected an existing idea stream, a prose note whose only image reference has no local attachment, and a Frontmatter-based object record. Preserved raw input, object identity, financial/verification state and unknowns. Prepared a source-hashed governance checklist rather than synthesizing a research page or backfilling IDs.
+- Reproduced escaped table alias links leaving `.md` in normalized path targets. Fixed the shared resolver; same-scan, note-target-only comparison against the backed-up original corrects exactly eight existing PRD references without editing those source notes. Diagnostic version increased 2 -> 3 so review deltas cannot mistake rule changes for source repairs. Graph projections now carry resolution version 2; missing/mismatched versions are not reused. Ordinary reads omit old graph affinity; explicit graph queries may rebuild externally.
+- Final full suite: **454 passed in 119.16s**; Ruff over scripts/tests/integrations passed. Tests cover namespace separation, duplicate fields, unparsed metadata, complete counts under bounded display, changing/unreadable verification scans, read-only CLI/no implicit directories, table aliases/assets/headings and rejection of old graph-rule caches. Existing tests and working-tree changes were preserved. A prior full run passed before the additional graph-cache protection; the final count above is authoritative for this batch.
+- Created only `200_Area/Knowledge_Data_Governance.md` using broker plan `999f7e5f3d8243b99b3fa0a4d2ba332d`, with expected missing target and stable intent key. Stable CLI returned committed + successful incremental indexing, 2,067 notes and no skips. Source SHA-256: `2f45a46822fed642daf519dafbca6ea8f7d4f1e6019f9b8fc4bd65cdc65740f8`. No saved-policy elevation, bulk source edits, moves, deletions, service restart, Git commit/push or research publication.
+- Post-write verification: the created file matches the frozen draft; all seven internal links resolve and stable-CLI retrieval returns the same hash with stale=false. Against the pre-create inventory there is one added source, no removals, and three changed existing sources (Inbox cockpit, project cockpit and task note). Those concurrent changes are not operations in this batch's broker plan and are not counted as governance repairs; no whole-Vault byte-invariance claim is made. Original three pilot-source versions remain represented by their saved hashes.
+
+Remaining: known quality context_queue include/exclude/tags membership defect; missing attachment recovery, explicit snapshot/source relationships and reviewed existing-note amendments. These are pending data-governance work, not automatically repaired by inventory or a changed diagnostic count. Private source manifests, before-copies, comparison evidence, pilot hashes and JUnit output are retained outside the Vault; the Vault governance entry records their local location.
+
+## 2026-10-26 — filtered quality membership and source-governance follow-through
+
+- Baseline full suite before source changes: **454 passed in 143.33s**. Preserved the existing dirty working tree and backed up the specific source/doc files. No installed sibling modules were patched.
+- Fixed `quality.context_queue` scope-only attribution by reusing shared scopes/include/exclude/tags membership. The CLI supplies its existing source scan and full doctor occurrence stream; grouped targets are attributed across all actual problem sources, not the first path or the capped 20-source sample. A same-named relative link that resolves elsewhere cannot become an in-scope problem. Repository-relative paths are not treated as Vault paths.
+- Queue schema 2 / membership_rules_version 2 discloses membership_complete, membership_basis, per-Context source counts and unverified Context ids. Missing required tags, truncated fallback samples or an inconsistent occurrence report cannot return a false complete classification. All original signals and full counts remain available; no source repair or state promotion follows from a reclassification.
+- Same-scan live comparison: **2,070 Markdown notes, 3,754 identical signals**. Old buckets 2,524 maintained / 1,230 unscoped become 2,512 / 1,242 with complete membership. The 12 reassigned groups are a rules correction, not 12 repaired notes. Stable-CLI quality also returned queue schema 2 and membership_complete=true; exit 1 denotes findings, not an operational error. No corresponding defect is asserted for contexts review.
+- Final full suite: **461 passed in 131.07s**; Ruff scripts/tests/integrations passed. New cases cover filters/nested tags, late in-scope occurrences beyond the display sample, relative-target success elsewhere, missing tags under zero display budget, excluded-path certainty, repository separation and incomplete source reports. CLI acceptance uses real registered normalized filters. One initial new fixture used unnormalized uppercase tags in an internal canonical-definition call; corrected the fixture. An initial test command named a nonexistent file and ran no tests; neither is represented as a passing run.
+- Searched the scoped Documents and Codex backup trees by target filename and four existing ZIP member inventories; no matching image found, no filesystem/archive read errors in the recorded scan. Excluded dependency/Git-object directories are recorded; renamed assets, cloud/external disks and Git object history are not ruled out. No synthetic image, OCR or replacement research prose was created.
+- Identity follow-up retained 151 candidate groups: 134 one-nonhistorical-plus-historical, 14 historical-only, 3 multiple-nonhistorical, based on path hints; 146 business-ID namespaces and 5 ULID groups. These classifications do not establish authoritative lineage or permit deletion. Source and consumer evidence is retained privately. Built-in Templates is configured/enabled; two fixed-ULID template lines have exact broker replace previews, left uncommitted under append-create. Existing person/month records and business IDs remain unchanged.
+- Inspected Ownly's configured WYQD root and known source directory-prefix consumers; equivalence with the installed build and exhaustive consumer coverage remain unverified. An explicit-project-root official CLI summary succeeded (35 objects). Saved CLI defaults point at an absent old checkout; configuration was not changed. No Ownly objects, account values, snapshots or backups were modified.
+- Committed a prefix-preserving missing-asset annotation to the original note through plan `67872097dc4a4c4e8bc496e5d206efa2`; stable CLI returned successful indexing. Before hash `41c1f9d408e5fe67f711bb98272a3917b8032588d5493e4a394e90e17ed0b4ee`, after hash `231886f4aa1c6afc0800340fc25fcb33a6a88ce21e981417b8a8dc2dc93e4bd0`. The image reference and complete old byte prefix are retained; recovery remains pending.
+
+Private comparison/manifest/asset-search/consumer evidence, exact template patches, broker plans and JUnit results live outside the Vault; their location and the current dispositions are appended to the single existing Vault governance entry. No write-policy elevation, bulk migration/deletion, service restart, research publication, Git commit or push. Quality membership defect is resolved; missing image and reviewed template replacements remain open.
+
+Post-write verification: governance append plan `d78bc4e023c248268e4d2bda4a41bf15` committed and indexed successfully (2,070 notes). Both modified notes match their frozen after-hashes and retain the complete expected old-byte prefixes. Source manifests show no additions/removals, those two intended modifications and one separately observed task-note change, not attributed to these broker plans. Stable-CLI retrieval of the missing-asset annotation returned its expected new hash with stale=false. The two template files are unchanged; no recovery of the missing image is claimed.

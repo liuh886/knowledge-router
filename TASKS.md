@@ -3,6 +3,77 @@
 This is the portable status for the packaged release. It distinguishes proven local behavior
 from host-specific activation gates.
 
+## Current execution queue — data foundation, 2026-10-25
+
+Authority: [current data-layer plan](docs/development-plan.zh.md#2026-10-25-基础数据层收敛当前执行计划) and [data contract](docs/data-layer-contract.zh.md).
+The queue below supersedes the KR-N1–N5 ordering retained as history. Existing Contexts, pages, domain schemas and runtime policy remain compatible; no automatic retirement or migration.
+
+- [x] **DL-1 — Contract and read-only inventory.** Separate document/object/version/block identity, role hints, provenance, temporal meanings and explicit relations. `scripts/data_inventory.py` produces external-only JSON; two matching live manifests cover 2,066 notes with no skips. Role/ID candidates are not defects; no requirement to backfill every note.
+- [x] **DL-2 — Correct diagnostics before cleanup.** Reproduced and repaired escaped table wikilinks and quality queue filtered membership; separate diagnostic/membership rule versions preserve comparability and complete counts.
+  - [x] Fix table-escaped aliases in the shared resolver; same-source comparison corrects eight existing PRD references. Bump diagnostic rules and invalidate graph projections built with old resolution rules.
+  - [x] Resolve quality context_queue membership/filter defect: reuse shared filters, full problem occurrences, explicit unknown-tag evidence and repository/Vault separation; schema 2. Same-scan live comparison keeps all 3,754 signals and moves 12 groups to unscoped, not a source repair.
+- [x] **DL-3 — Three-family data pilot.** Inspected one existing idea stream, an image-only knowledge note with a missing asset, and a structured object. Source-hashed dispositions prepared; original records retained, no certifications or account changes.
+- [ ] **DL-4 — Reviewed amendments.** Freeze precise changes against current source hashes; apply only through available broker policy and verify the result. No bulk ID/schema/link migration or deletion.
+  - [x] Create one human-readable Vault governance entry through an exact broker create plan; unchanged append-create policy, successful incremental indexing. Existing-source amendments remain pending, not silently applied.
+  - [x] 2026-10-26: inspect identity candidates and known consumers; preserve 134 nonhistorical-plus-history, 14 historical-only and 3 multiple-nonhistorical groups as hints. Search scoped file names and four ZIP inventories for the missing image; none found, no fabricated recovery.
+  - [ ] Two exact template fixed-ULID removal previews are frozen; do not commit replace_existing under saved append-create. Missing-image status and round-two findings use prefix-preserving broker appends.
+  - [x] Append the verified missing-asset status to its original note via the broker; preserve the original embed and disclose unrecovered/renamed/external possibilities. Missing image remains unresolved, not synthesized.
+
+Research synthesis, claim interpretation and CCS page evolution are optional application work, not data-layer acceptance gates. Runtime isolation (KR-N1) and the unimplemented Ownly adapter remain backlog.
+
+## Earlier execution queue — 2026-10-25 (superseded)
+
+Historical authority: [earlier execution plan](docs/development-plan.zh.md). Current ordering is the data-foundation queue above.
+Maintenance findings and dispositions: [2026-10-25 audit](docs/maintenance-audit-2026-10-25.zh.md). A successful manual maintenance cycle does not by itself complete KR-N3.
+Plan authored; implementation has not started. Complete each acceptance gate before advancing.
+
+- [ ] **KR-N1 — Freeze and isolate the running release.** Reviewed source baseline, immutable versioned snapshot/manifest, one active version across entrypoints, activation and rollback rehearsal. Estimated 1–2 focused sessions.
+- [ ] **KR-N2 — Prove real Agent use.** Three source-backed real tasks through new-session/model orchestration; correct citations and unknown/stale disclosure; isolated continuation/empty/timeout cases. Estimated 1–2 sessions.
+- [ ] **KR-N3 — Close maintenance and freshness.** Explicit policy scopes, a successful complete maintain/tick baseline, separate project-catalog freshness and a 5–10-action bounded review preserving full diagnostics. Estimated 1–2 sessions.
+- [ ] **KR-N4 — Deliver one knowledge-update pilot.** CCS v2 to the next reviewed version: claim-level impact, real supporting/conflicting/replacement/irrelevant evidence, local draft, recoverable publish and next-session use. Estimated 2–3 sessions.
+- [ ] **KR-N5 — Ownly read adapter, second batch.** Prioritized after the core batch; technically depends only on KR-N1 and an available MCP, not knowledge-page publication. Implement milestone G with existing read tools only, no data copies or new index. Estimated 1–2 sessions when the MCP is available.
+
+The earlier Ownly backlog below remains valid; the queue above sets the implementation order. Estimates depend on host integration and evidence review, not fixed delivery dates.
+
+## Maintenance audit — 2026-10-25
+
+- [x] Inspect active source/launcher/state boundaries and real Vault diagnostics; preserve pre-existing work.
+- [x] Reproduce omitted PowerShell integration in source checkpoints; include scoped .ps1 sources and verify isolated byte-preserving restore.
+- [x] Clarify historical plan precedence and installed README ownership; retain historical evidence.
+- [x] Run a validated maintain/tick cycle and refresh the read-only project catalog; disclose document caps.
+- [x] Prepare eight exact Vault rule/link amendments with original bytes and hashes; leave append-create policy unchanged.
+- [x] 2026-10-26: fix quality context_queue include/exclude/tags membership using full problem occurrences; isolated and live comparisons retained. See the DL-2 record above.
+- [ ] Apply the prepared Vault amendments only through an explicitly authorized edit boundary, after source hash revalidation.
+- [ ] Inventory consumers before retiring historical scripts, Vault-local caches and duplicate backup sources.
+
+Details: [maintenance audit](docs/maintenance-audit-2026-10-25.zh.md). The items above do not complete KR-N1–N5.
+
+## Planned — Ownly MCP on-demand read integration, 2026-10-24
+
+Authority and acceptance: [development plan, milestone G](docs/development-plan.zh.md#g--ownly-mcp-按需只读查询新增待办2026-10-24).
+
+- [ ] Add an optional thin adapter so Knowledge Router can call existing Ownly MCP read tools
+      as an API and include the returned JSON in the current Context. Keep Markdown as the
+      normal source for background, prose and history. Cover explicit local stdio configuration,
+      session cleanup, result normalization, tool/argument/query-time metadata, and honest
+      connection/timeout/tool errors. Start with objects/history and active/due subscriptions.
+      Explicitly disable writes and allowlist read tools; verify no Ownly data mutation and no
+      regression when MCP is unconfigured. Do not copy results into Markdown or re-index them.
+      No new Ownly API, evidence-model redesign, persistent cache, sync, change tracking or
+      knowledge-page publishing is required for this task.
+
+## Stability repair — 2026-10-24
+
+- [x] Reproduce and fix hardlinked source reads blocking indexing after a committed capture.
+- [x] Keep hardlink refusal for writes, mutation previews and control records.
+- [x] Validate the installed runtime and idempotently resume the real original plan without
+      changing its target bytes; restore full 2183-note indexing without skipped sources.
+- [x] 323 regression tests, ruff and bytecode checks passed.
+- [x] Repair the host's independent 15-second commit deadline and discarded stderr. Verify the
+      real callback with temporary confirmation state, then reload the idle service and check identity.
+
+See [the incident record](docs/incidents/2026-10-24-capture-hardlinks.zh.md).
+
 ## Current architecture batch — 0.2.0, 2026-10-23
 
 Authority: [DESIGN](DESIGN.md), [ADR-001](docs/decisions/001-unified-memory-workflows.zh.md),
@@ -398,3 +469,37 @@ absolute `KNOWLEDGE_ROUTER_ENTRYPOINT` override (relative paths rejected), raisi
 suite to **153 passed**. The real-Vault retrieval fixture and the opencode operation log were
 not distributed; `runtime_layout.md` was sanitized. OC-03 remains an operational gate: no live
 Ductor process was found, so activation/rollback stays unexecuted.
+
+## 2026-10-25 personal contexts integration
+
+- [x] Reuse broker-backed memory workflows for five typed streams; preserve todo date normalization.
+- [x] Stable block IDs, area occurrence date, retry and index completion semantics.
+- [x] Read-only personal checks in shared Context review; no separate task/ledger store.
+- [x] Repair Biography template, state split, evidence references and dynamic annual navigation.
+- [x] Full regression and lint; installed CLI launcher and thin PowerShell source activated.
+- [x] Registered five personal Contexts at revision 6; prior definitions/versions preserved, stale Daily/CCS scope references repaired; real read-only smoke checks pass.
+- [x] Deployment evidence and remaining operational boundaries recorded in EVALUATE.md and the local recovery directory.
+
+Deferred: human source-level review of 10 historical achievement cards; broker evidence reconciliation for investments; automatic follow-up delivery; broad old-capture cleanup. No automatic scheduler or new service.
+
+## 2026-10-25 performance slice
+
+- [x] Profile bottlenecks, preserve original implementations for measured comparison.
+- [x] Exact registered-ID scope reads and per-scan tag parsing.
+- [x] New tests for no unrelated content reads, evidence parity, live membership changes, encoding failures, unsafe scopes, ambiguity, linked events and revalidation.
+- [x] Repeated process measurements and five-Context parity.
+- [x] Full regression: 418 passed; operating contract and measured report recorded.
+
+Next independent design gate: incremental indexing must prove how external edits/additions/deletions are detected before skipping any complete verification. No mtime-only cache or implicit background service in this slice.
+
+## 2026-10-25 incremental index slice
+
+- [x] Profile source scans and build; preserve prior source.
+- [x] Bounded source I/O with parity and error tests.
+- [x] Verified immutable delta index, byte receipts, legacy validation/full fallback.
+- [x] Gated candidate publication, serialized pointer/pruning, interrupted-retry coverage.
+- [x] Stable search tie ordering and explicit sync --full.
+- [x] Real-corpus isolated logical/search comparisons; full regression 440 passed.
+- [x] Production derived index verified: 2,370 notes, valid byte receipt, fresh source-backed searches; state policy unchanged.
+
+Remaining: reducing full source verification requires a separately proven change-journal design; no metadata-only skip or unrequested background service.

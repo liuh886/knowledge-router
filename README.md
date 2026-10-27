@@ -3,6 +3,10 @@
 面向本地 Markdown / Obsidian Vault 的证据与 Context 维护工具。保留原有目录，
 为 Agent 提供带出处的检索、显式状态、知识页和可恢复的受控记录。
 
+当前建设重点是[基础数据与证据服务](docs/data-layer-contract.zh.md)：身份、来源、时间、引用、版本关系与可解释诊断。Context 是可选资料视图，知识页和领域工作流是可选应用；研究综合、业务判断与语义冲突解释由调用方负责。已有功能保留兼容。
+
+不依赖 Context 的只读开发盘点：`python scripts/data_inventory.py --vault-root <path> --limit 10`。JSON 包含完整路径/哈希清单和有限候选；只提取简单顶层标量，不验证完整 YAML，不写来源、索引或注册表。请将私有输出保存在 Vault 外。
+
 **0.2.0 · Python 3.11+ · 无运行时第三方依赖 · Windows 写入内核。**
 读取不要求 Obsidian 或 Ductor 运行。追加、全文编辑依赖 Windows 排他句柄；其他平台拒绝这些操作。
 
@@ -22,6 +26,7 @@ flowchart TD
 - **来源**：用户 Markdown 是原始内容；Context 定义、冻结计划、回执与变更日志是外部持久控制记录。
   两者都需要备份；FTS 索引与关系图是可重建投影。
 - **检索**：SQLite FTS5、中文二元词、规则别名扩展；每条证据带路径、行号、SHA-256 和过期标识。
+  只读来源支持硬链接笔记；写入目标与控制记录继续拒绝硬链接，保护共享 inode。
 - **Context**：有用途、范围和生命周期的上下文，支持一个事件关联多处、显式状态、冲突和跟进。
 - **知识维护**：版本化知识页、来源依赖、预算读取、主张展开和复查议程。正文由人或 Agent 编写，工具核验依据。
 - **六切片工作流**：Focus、Idea、Memo、Todo、Contact、Ownly 目录模板，是可选工作流。
@@ -140,3 +145,11 @@ python -m pytest
 CI 覆盖 Windows Python 3.11 / 3.12 / 3.13。实测结果及适用范围记录在 [EVALUATE.md](EVALUATE.md)。
 
 [MIT License](LICENSE)
+
+### Personal capture and domain maintenance
+
+`streams append todo|memo|idea|biography|investment TEXT --vault NAME` shares the
+frozen broker/index boundary. `streams list` discloses the optional profile's existing
+parent directories; `streams check` reports bounded, read-only domain review candidates.
+Biography/Investment inputs remain unreviewed; recording never posts a trade or verifies
+a credential. See [personal workflow design](docs/personal-contexts-2026-10-25.zh.md).

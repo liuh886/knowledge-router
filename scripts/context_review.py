@@ -29,6 +29,7 @@ from context_compile import (
 )
 from context_manager import extract_tags, note_in_context
 from context_store import load_context_version
+from personal_review import PERSONAL_DIAGNOSTICS_VERSION, personal_findings
 from fts_indexer import scan_notes
 from registry import FileLock, VaultConfig, VaultRegistry
 from vault_doctor import DIAGNOSTICS_VERSION, NOISY_HINTS, diagnose_vault
@@ -422,6 +423,7 @@ _KIND_PRIORITY = {
     "maintenance": 0,
     "followup": 1,
     "compiled_card_stale": 2,
+    "domain_review": 2,
     "quality": 3,
 }
 # Hints that usually mean machine-generated link noise. They are ranked last for
@@ -432,6 +434,7 @@ def _rank_item(item: dict[str, Any]) -> tuple[Any, ...]:
     hint = item.get("triage_hint")
     return (
         _KIND_PRIORITY.get(str(item["kind"]), 9),
+        0 if item.get("severity") == "high" else 1,
         1 if hint in NOISY_HINTS else 0,
         -int(item.get("occurrences") or 0),
         str(item.get("code") or ""),
@@ -494,6 +497,15 @@ def review_agenda(
     card_registry_state = str(card_registry["state"])
     card_registry_reason = card_registry.get("reason")
     items.extend(_quality_items(config, contexts, scan, context_id=context_id))
+    personal_tags = {note.path: extract_tags(note.content) for note in scan.records}
+    for finding in personal_findings(scan, today=now.date()):
+        for context in contexts:
+            if context_id and context["id"] != context_id:
+                continue
+            if not (context.get("maintenance") or {}).get("enabled", False):
+                continue
+            if note_in_context(finding["path"], personal_tags.get(finding["path"], ()), context):
+                items.append({**finding, "context_id": context["id"]})
     items.extend(_stale_card_items(registry, config, scan, contexts, context_id=context_id))
 
     for item in items:
@@ -530,7 +542,7 @@ def review_agenda(
         "maintenance_configured_contexts": poll.get("maintenance_configured_contexts"),
         "context_revision": version["revision"] if version else 0,
         "definitions_fingerprint": definitions_fingerprint(contexts),
-        "diagnostics_version": DIAGNOSTICS_VERSION,
+        "diagnostics_version": f"{DIAGNOSTICS_VERSION}:personal-{PERSONAL_DIAGNOSTICS_VERSION}",
         "card_registry_state": card_registry_state,
         "card_registry_reason": card_registry_reason,
     }

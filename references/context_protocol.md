@@ -307,3 +307,16 @@ preserves existing compare-and-swap, recovery and append-only guarantees.
 
 Performance claims for the existing FTS benchmark do not apply to Context discovery:
 this version performs a live source scan and reports no millisecond retrieval SLA.
+
+## Exact-id read scope (2026-10-25)
+
+`contexts brief` with an exact registered Context id reads live source content only
+inside its declared scopes plus explicitly linked event sources. Paths are still
+enumerated live; new/moved/deleted notes need no content-cache invalidation.
+Unrelated unreadable content does not make that scoped read incomplete; selected
+source decode/I/O failures refuse the brief. Name/inferred selection keeps full
+discovery and ambiguity checks. Evidence still rechecks each returned source hash.
+
+`source_generation_scope` discloses the digest boundary: `context_scopes_and_linked_events`
+for the exact-id branch, `vault` for global discovery. A scoped generation must not
+be used as a Vault/index generation. No full-index activation policy changes.

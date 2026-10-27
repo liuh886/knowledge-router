@@ -141,3 +141,14 @@ The later shareable repository should copy this layer split and behavior tests. 
 packaged executable, scheduler integration, and an optional embedding sidecar. Non-Windows append
 remains fail-closed until an equivalent kernel-level writer exclusion broker exists; portable
 packaging must not weaken that invariant.
+
+## Verified delta construction (2026-10-25)
+
+fts_indexer owns immutable candidate cloning and affected-note/FTS/CJK updates.
+The prior generation is selected only from the registered active pointer. Complete
+file SHA-256 receipts bind verified projection bytes to Vault/schema/generation;
+copying hashes the bytes actually inherited. Legacy/no-receipt input gets full
+semantic verification; invalid input falls back to the full builder. Both source
+scans remain mandatory; a candidate is published only after the second complete scan.
+Registry activation and pruning use the same per-Vault lock as construction.
+Receipts are rebuildable index.* cache files and are pruned with their database.

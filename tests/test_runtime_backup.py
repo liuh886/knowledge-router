@@ -114,6 +114,26 @@ def test_restore_rehearsal_isolated_target(tmp_path):
     assert (registry.vault_state_dir(config) / "maintenance_baseline.json").is_file()
 
 
+def test_checkpoint_restores_powershell_integration_without_unlisted_files(tmp_path):
+    source = tmp_path / "source"
+    integration = source / "integrations" / "powershell"
+    integration.mkdir(parents=True)
+    payload = b"# Canonical capture adapter\r\nfunction kr { python $entry @args }\r\n"
+    (integration / "knowledge-capture.ps1").write_bytes(payload)
+    (integration / "secrets.env").write_text("excluded", encoding="utf-8")
+    (source / "unlisted.ps1").write_bytes(payload)
+    result = create_source_checkpoint(source, tmp_path / "backups", label="powershell")
+    archive = Path(result["archive"])
+    with zipfile.ZipFile(archive) as zf:
+        assert "integrations/powershell/knowledge-capture.ps1" in zf.namelist()
+        assert "integrations/powershell/secrets.env" not in zf.namelist()
+        assert "unlisted.ps1" not in zf.namelist()
+    target = tmp_path / "restore"
+    restored = restore_backup_archive(archive, target)
+    assert restored["status"] == "restored"
+    assert (target / "integrations/powershell/knowledge-capture.ps1").read_bytes() == payload
+
+
 def test_traversal_rejected_and_nothing_escapes(tmp_path):
     backup_root = tmp_path / "backups"
     backup_root.mkdir()

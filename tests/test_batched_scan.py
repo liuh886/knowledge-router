@@ -53,19 +53,17 @@ def test_scan_reuses_each_parent_and_preserves_all_source_bytes(tmp_path, monkey
     assert all((tmp_path / path).read_bytes() == raw for path, raw in sources.items())
 
 
-def test_one_read_failure_does_not_hide_sibling_or_other_directory(
-    tmp_path, monkeypatch
-):
+def test_one_read_failure_does_not_hide_sibling_or_other_directory(tmp_path, monkeypatch):
     for relative in ("a.md", "b.md", "other/c.md"):
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("# Original\n", encoding="utf-8")
     original = SecureParent.read_bytes
 
-    def fail_one(parent, *, name=None):
+    def fail_one(parent, *, name=None, allow_hardlinks=False):
         if name == "a.md":
             raise PermissionError("simulated source busy")
-        return original(parent, name=name)
+        return original(parent, name=name, allow_hardlinks=allow_hardlinks)
 
     monkeypatch.setattr(SecureParent, "read_bytes", fail_one)
     scan = fts_indexer.scan_notes(tmp_path)

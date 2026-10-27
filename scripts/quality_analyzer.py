@@ -7,6 +7,7 @@ from collections import Counter, defaultdict
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from context_manager import extract_tags, note_in_context
 from evidence import QualitySignal
 
 if TYPE_CHECKING:
@@ -38,6 +39,8 @@ def vault_quality_signals(
                     "target": item["target"],
                     "occurrences": item["occurrences"],
                     "sources": sources,
+                    "source_count": item.get("source_count", len(sources)),
+                    "sources_truncated": item.get("sources_truncated", False),
                     "triage_hint": hint,
                     "triage_hint_counts": dict(item.get("triage_hint_counts", {})),
                 },
@@ -61,6 +64,8 @@ def vault_quality_signals(
                     "target": item["target"],
                     "occurrences": item["occurrences"],
                     "sources": sources,
+                    "source_count": item.get("source_count", len(sources)),
+                    "sources_truncated": item.get("sources_truncated", False),
                     "candidates": list(item.get("candidates", [])),
                     "proximity_unique": int(item.get("proximity_unique", 0)),
                 },
@@ -271,6 +276,8 @@ def context_quality_queue(
     signals: Iterable[QualitySignal],
     *,
     limit: int = 20,
+    source_scan: ScanReport | None = None,
+    doctor_report: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Prioritize explainable findings against reviewed Context scopes.
 
@@ -281,22 +288,50 @@ def context_quality_queue(
         raise ValueError("limit must be between 0 and 100")
     definitions = [item for item in contexts if isinstance(item, dict)]
 
-    def under(path: str, scope: str) -> bool:
-        normalized_path = path.replace("\\", "/").strip("/")
-        normalized_scope = scope.replace("\\", "/").strip("/")
-        return normalized_scope in {"", "."} or normalized_path == normalized_scope or (
-            normalized_path.startswith(normalized_scope + "/")
-        )
+    tags_by_path = {
+        note.path: extract_tags(note.content) for note in source_scan.records
+    } if source_scan is not None else {}
+    # Use actual unresolved/ambiguous occurrences, not all links sharing a target:
+    # the same relative target may resolve in one directory and fail in another.
+    occurrence_paths: dict[tuple[str, str], set[str]] = defaultdict(set)
+    if doctor_report is not None:
+        for kind, key in (("broken_link", "broken_links"), ("ambiguous_link", "ambiguous_links")):
+            for item in doctor_report.get(key, []):
+                occurrence_paths[(kind, str(item["target"]))].add(str(item["source"]))
 
-    def matched_contexts(path: str | None) -> list[str]:
-        if not path:
-            return []
-        matches = []
-        for context in definitions:
-            scopes = context.get("scopes", [])
-            if isinstance(scopes, list) and any(under(path, str(scope)) for scope in scopes):
-                matches.append(str(context.get("id", "")))
-        return sorted(item for item in matches if item)
+    def source_paths(signal: QualitySignal) -> tuple[set[str], bool, str]:
+        target = signal.evidence.get("target")
+        if doctor_report is not None and signal.kind in {"broken_link", "ambiguous_link"}:
+            key = (signal.kind, str(target))
+            if key in occurrence_paths:
+                return occurrence_paths[key], True, "full_occurrences"
+            # A supplied but inconsistent report is not evidence for a false clear.
+            return set(), False, "missing_occurrences"
+        paths = {
+            str(p) for key in ("sources", "paths")
+            for p in signal.evidence.get(key, []) if isinstance(p, str) and p
+        }
+        if signal.path:
+            paths.add(signal.path)
+        complete = not signal.evidence.get("sources_truncated", False)
+        return paths, complete, "signal_sources"
+
+    def membership(paths: set[str]) -> tuple[dict[str, int], list[str]]:
+        counts: Counter[str] = Counter()
+        unknown: set[str] = set()
+        for path in sorted(paths):
+            for context in definitions:
+                cid = str(context.get("id", ""))
+                if not cid:
+                    continue
+                # Missing tag evidence is unknown, rather than an empty tag list.
+                if context.get("tags") and path not in tags_by_path:
+                    if note_in_context(path, (), {**context, "tags": []}):
+                        unknown.add(cid)
+                    continue
+                if note_in_context(path, tags_by_path.get(path, ()), context):
+                    counts[cid] += 1
+        return dict(sorted(counts.items())), sorted(unknown)
 
     severity_rank = {"error": 0, "warning": 1, "info": 2}
     category_rank = {
@@ -311,7 +346,14 @@ def context_quality_queue(
     historical_parts = {"archive", "archives", "backup", "backups", "snapshot", "snapshots"}
     entries: list[dict[str, Any]] = []
     for signal in signals:
-        context_ids = matched_contexts(signal.path)
+        if signal.source_type == "vault":
+            paths, complete, basis = source_paths(signal)
+            matched_counts, unknown_ids = membership(paths)
+            context_ids = sorted(matched_counts)
+        else:
+            # Repository-relative paths cannot establish Vault scope membership.
+            matched_counts, unknown_ids, context_ids = {}, [], []
+            complete, basis = True, "non_vault_source"
         kind = signal.kind
         if kind in {"unreadable_note", "unreadable_project_document"}:
             category = "evidence_gap"
@@ -336,6 +378,10 @@ def context_quality_queue(
                 "bucket": bucket,
                 "category": category,
                 "context_ids": context_ids,
+                "context_source_counts": matched_counts,
+                "unverified_context_ids": unknown_ids,
+                "membership_complete": complete and not unknown_ids,
+                "membership_basis": basis,
                 "historical_hint": category == "historical_candidate",
                 "signal": signal.to_dict(),
             }
@@ -350,9 +396,15 @@ def context_quality_queue(
         )
     )
     visible = entries[:limit]
+    scan_complete = source_scan is None or not (
+        source_scan.skipped_io or source_scan.skipped_decode
+    )
+    membership_complete = scan_complete and all(row["membership_complete"] for row in entries)
     return {
-        "schema_version": 1,
-        "status": "findings" if entries else "clear",
+        "schema_version": 2,
+        "membership_rules_version": 2,
+        "membership_complete": membership_complete,
+        "status": ("findings" if entries else "clear") if membership_complete else "incomplete",
         "total": len(entries),
         "counts_by_bucket": {
             "maintained": sum(item["bucket"] == "maintained" for item in entries),
